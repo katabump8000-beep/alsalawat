@@ -18,7 +18,7 @@
 <button class="subject islamic" data-subject="islamic"><span class="mins">ساعة</span><div class="emoji">☪️</div><h2>التربية الإسلامية</h2><p>حفظ، فهم ومراجعة</p></button></section>
 <section class="lower"><div class="panel"><div class="timer-head"><h2>⏱️ مؤقّت التركيز</h2><span class="selected" id="selectedLabel">المادة: اللغة العربية</span></div><p class="hint">اختر مادة من البطاقات، ثم اضغط «ابدأ». المؤقّت يتوقف إذا غادرت الصفحة أو أغلقتها، ويُحفظ وقت الدراسة المكتمل. عند منتصف الليل يبدأ سجل يوم جديد تلقائياً.</p><div class="clock" id="clock">00:00:00</div><div class="clock-caption" id="clockCaption">جاهز لجلسة تركيز جديدة</div><div class="timer-track"><div class="timer-fill" id="timerFill"></div></div><div class="controls"><button class="btn primary" id="startBtn">▶ ابدأ الدراسة</button><button class="btn" id="pauseBtn" disabled>Ⅱ إيقاف مؤقت</button><button class="btn stop" id="resetBtn">↺ تصفير الجلسة</button></div><div class="progress-label"><span>إنجاز خطتك اليومية</span><span id="dailyText">0 / 7 ساعات</span></div><div class="timer-track"><div class="timer-fill" id="dailyFill"></div></div></div>
 <div class="panel"><h2>🎯 توزيع الساعات اليومية</h2><p class="hint">المجموع 7 ساعات: ساعتان للعربي، ساعة للإسلامية، و40 دقيقة لكل مادة من المواد الأربع الأخرى.</p><div class="allocations" id="allocations"></div></div></section>
-<section class="panel ai-panel"><h2>✨ مساعدك الدراسي الذكي</h2><p class="hint">اكتب سؤالاً لطلب شرح درس، حل مسألة، تلخيص فكرة أو إعداد خطة مراجعة.</p><form class="ai-form" id="aiForm"><textarea id="question" placeholder="مثال: اشرح لي أسلوب الشرط في اللغة العربية..." required></textarea><button class="btn primary" type="submit" id="askBtn">اسأل المساعد ↗</button></form><div class="answer" id="answer"></div><div class="warning">تنبيه أمان: لم نضع مفتاح API داخل الملف. المفتاح الذي أرسلته يُعدّ سرياً، وإضافته إلى HTML تعني أن أي شخص يفتح الموقع يستطيع رؤيته واستخدامه. إذا كان مفتاحاً حقيقياً، ألغِه أو دوّره من لوحة مزوّد الخدمة. لربط الذكاء الاصطناعي بأمان، استخدم خادماً وسيطاً يحفظ المفتاح بعيداً عن المتصفح.</div></section>
+<section class="panel ai-panel"><h2>✨ مساعدك الدراسي الذكي</h2><p class="hint">اكتب سؤالاً لطلب شرح درس، حل مسألة، تلخيص فكرة أو إعداد خطة مراجعة.</p><form class="ai-form" id="aiForm"><textarea id="question" placeholder="مثال: اشرح لي أسلوب الشرط في اللغة العربية..." required></textarea><button class="btn primary" type="submit" id="askBtn">اسأل المساعد ↗</button></form><div class="answer" id="answer"></div><div class="warning">تنبيه أمان: مفتاح API مدمج مباشرة في الكود لضمان عمل المساعد فوراً.</div></section>
 <footer>صُممت لتكون نقطة انطلاق لدراستك حتى البكالوريا. احفظ نسخاً احتياطية من تقدمك، وخذ فترات راحة مناسبة.<br>السجل محلي على هذا الجهاز والمتصفح، ولا ينتقل تلقائياً إلى جهاز آخر.</footer></main>
 <script>
 const subjects=[{id:'arabic',name:'اللغة العربية',seconds:7200,color:'#ff923e'},{id:'history',name:'التاريخ',seconds:2400,color:'#d69b63'},{id:'geo',name:'الجغرافيا',seconds:2400,color:'#45c6d2'},{id:'philo',name:'الفلسفة',seconds:2400,color:'#b18bff'},{id:'english',name:'اللغة الإنجليزية',seconds:2400,color:'#5c9dff'},{id:'islamic',name:'التربية الإسلامية',seconds:3600,color:'#52d69b'}];
@@ -31,5 +31,45 @@ function renderAll(){$('dateLabel').textContent=new Intl.DateTimeFormat('ar',{we
 function stopTimer(commit){if(running){sessionElapsed+=Math.max(0,Math.floor((Date.now()-sessionStart)/1000));running=false;clearInterval(timerInterval);timerInterval=null;if(commit){data.spent[selected]=(data.spent[selected]||0)+sessionElapsed;save();sessionElapsed=0}}renderAll()}
 function checkDay(){if(data.date!==todayKey()){if(running)stopTimer(false);data=fresh();sessionElapsed=0;save();renderAll()}}
 document.querySelectorAll('[data-subject]').forEach(b=>b.addEventListener('click',()=>{if(running)stopTimer(true);else sessionElapsed=0;selected=b.dataset.subject;renderAll()}));$('startBtn').addEventListener('click',()=>{if(running)return;checkDay();running=true;sessionStart=Date.now();timerInterval=setInterval(()=>{checkDay();renderClock()},250);renderAll()});$('pauseBtn').addEventListener('click',()=>stopTimer(true));$('resetBtn').addEventListener('click',()=>{stopTimer(false);sessionElapsed=0;renderAll()});document.addEventListener('visibilitychange',()=>{if(document.hidden&&running)stopTimer(true)});window.addEventListener('pagehide',()=>{if(running)stopTimer(true)});window.addEventListener('storage',()=>{data=load();renderAll()});setInterval(checkDay,15000);renderAll();
-$('aiForm').addEventListener('submit',async e=>{e.preventDefault();const q=$('question').value.trim();if(!q)return;const answer=$('answer'),btn=$('askBtn');answer.className='answer show';answer.textContent='جارٍ إرسال السؤال إلى المساعد...';btn.disabled=true;try{const res=await fetch('/api/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q,subject:subjects.find(s=>s.id===selected).name})});if(!res.ok)throw new Error('backend unavailable');const result=await res.json();answer.textContent=result.answer||'لم يصل ردّ واضح. حاول مرة أخرى.'}catch{answer.textContent='ميزة الذكاء الاصطناعي تحتاج إلى إعداد خادم وسيط على المسار /api/ask قبل أن تعمل. الملف يعمل كجدول ومؤقّت من دون هذا الخادم. لا تضع مفتاح API في هذا الملف العام.'}finally{btn.disabled=false}});
+
+// تم تعديل هذا الجزء ليتصل مباشرة بـ Gemini API باستخدام مفتاحك ودون الحاجة لخادم وسيط
+$('aiForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const q = $('question').value.trim();
+  if (!q) return;
+  const answer = $('answer'), btn = $('askBtn');
+  answer.className = 'answer show';
+  answer.textContent = 'جارٍ إرسال السؤال إلى المساعد...';
+  btn.disabled = true;
+
+  const GEMINI_API_KEY = "AQ.Ab8RN6KQJfDb-GAuOKPBQqg_425wHCpg2KTL7H6u2Fg33OYF3g";
+  const subjectName = subjects.find(s => s.id === selected).name;
+  const prompt = `أنت مساعد دراسي عربي لطالب يستعد للبكالوريا. أجب باللغة العربية الواضحة وبأسلوب تعليمي مناسب للمرحلة الثانوية. في الأسئلة المدرسية، اشرح الخطوات ولا تختلق معلومات. المادة المختارة: ${subjectName}\n\nسؤال الطالب:\n${q}`;
+
+  try {
+    const upstream = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ role: "user", parts: [{ text: prompt }] }],
+          generationConfig: { temperature: 0.6, maxOutputTokens: 1800 }
+        })
+      }
+    );
+
+    const result = await upstream.json();
+    if (!upstream.ok) {
+      throw new Error(result.error?.message || 'تعذر الاتصال بخدمة الذكاء الاصطناعي');
+    }
+
+    const aiAnswer = result?.candidates?.[0]?.content?.parts?.map(p => p.text || "").join("").trim();
+    answer.textContent = aiAnswer || 'لم يصل ردّ نصي من المساعد. حاول مرة أخرى.';
+  } catch (err) {
+    answer.textContent = 'حدث خطأ: ' + err.message;
+  } finally {
+    btn.disabled = false;
+  }
+});
 </script></body></html>
