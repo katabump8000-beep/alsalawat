@@ -8,6 +8,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - run: mkdir -p assets && cp -f click.mp3 saat.mp3 assets/ || true
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
