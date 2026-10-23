@@ -2,10 +2,11 @@ import 'dart:convert';
 import 'dart:math' as m;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:audioplayers/audioplayers.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 const devPass = 'hamzanjar8000.H';
-const pal = [0xFF000000, 0xFFFFFFFF, 0xFFD32F2F, 0xFFF57C00, 0xFFFBC02D, 0xFF2E7D32, 0xFF1565C0, 0xFF6A1B9A, 0xFFFFE0B2, 0xFFC8E6C9];
+const pal = [0xFF000000, 0xFFFFFFFF, 0x00FFFFFF, 0xFFFF1744, 0xFFFF5722, 0xFFFF9100, 0xFFFFEA00, 0xFFC6FF00, 0xFF76FF03, 0xFF00E676, 0xFF1DE9B6, 0xFF00E5FF, 0xFF00B0FF, 0xFF2979FF, 0xFF651FFF, 0xFFD500F9, 0xFFF50057, 0xFFFF4081, 0xFFFFD740, 0xFFB2FF59, 0xFF64FFDA, 0xFF18FFFF, 0xFF304FFE, 0xFF6200EA, 0xFFFFE0B2, 0xFFC8E6C9, 0xFFBBDEFB, 0xFFF8BBD0, 0xFFE1BEE7, 0xFFFFF9C4];
 const icons = {'tree': Icons.account_tree, 'card': Icons.crop_square, 'table': Icons.grid_on, 'pyr': Icons.change_history, 'shape': Icons.category};
 
 class Th {
@@ -21,11 +22,17 @@ Th get th => themes[themeN.value];
 List<Map> projects = [];
 late SharedPreferences prefs;
 void save() => prefs.setString('p', jsonEncode(projects));
-void tap() => SystemSound.play(SystemSoundType.click);
+final _ck = AudioPlayer()..setPlayerMode(PlayerMode.lowLatency);
+final _st = AudioPlayer();
+void tap() { HapticFeedback.selectionClick(); _ck.play(AssetSource('click.mp3')).catchError((_) {}); }
+void saat() { HapticFeedback.mediumImpact(); _st.play(AssetSource('saat.mp3')).catchError((_) {}); }
 double dn(x) => (x as num).toDouble();
 Map nc([double sz = 18, int bg = 0xFFFFFFFF]) => {'t': '', 'fg': 0xFF000000, 'bg': bg, 'sz': sz};
-double fw(Map x) => m.max(90.0, (x['t'] as String).length * dn(x['sz']) * .6 + 36);
-double fh(Map x) => dn(x['sz']) * 2 + 14;
+double fw(Map x) => m.max(90.0, (x['t'] as String).length * dn(x['sz']) * .55 + 30);
+double fh(Map x) => dn(x['sz']) * 1.9 + 10;
+double rowH(List r) => r.fold<double>(40, (a, x) => m.max(a, fh(x)));
+const txtP = {'n': 'نص حر', 'w': 220.0, 'h': 60.0, 's': -2, 'r': 0.0};
+List flist(Map p) => p['type'] == 'shape' ? p['d']['s'] as List : (p['f'] ??= []) as List;
 
 const shapes = [
   {'n': 'مستطيل كبير', 'w': 280.0, 'h': 140.0, 's': 0, 'r': 10.0},
@@ -43,7 +50,7 @@ const shapes = [
   {'n': 'معيّن', 'w': 160.0, 'h': 160.0, 's': 4, 'r': 0.0},
   {'n': 'خماسي', 'w': 160.0, 'h': 160.0, 's': 5, 'r': 0.0},
   {'n': 'سداسي', 'w': 170.0, 'h': 150.0, 's': 6, 'r': 0.0}];
-Map si(Map s, double x, double y) => {'w': s['w'], 'h': s['h'], 's': s['s'], 'r': s['r'], 'x': x, 'y': y, 'c': nc()};
+Map si(Map s, double x, double y) => {'w': s['w'], 'h': s['h'], 's': s['s'], 'r': s['r'], 'x': x, 'y': y, 'c': s['s'] == -2 ? nc(22, 0x00FFFFFF) : nc()};
 Rect rect(Map o) => Rect.fromLTWH(dn(o['x']), dn(o['y']), dn(o['w']), dn(o['h']));
 bool hit(Map it, List all) => all.any((o) => !identical(o, it) && rect(it).overlaps(rect(o)));
 
@@ -67,7 +74,8 @@ void editCell(BuildContext c, Map x, VoidCallback up) {
       TextField(controller: k, maxLines: null, autofocus: true, style: TextStyle(fontSize: dn(x['sz']), color: Color(x['fg'])), onChanged: (v) { x['t'] = v; up(); }),
       Slider(value: dn(x['sz']), min: 12, max: 60, onChanged: (v) { x['sz'] = v; ss(() {}); up(); }),
       const Text('لون النص'), colors(x, 'fg', () { ss(() {}); up(); }),
-      const SizedBox(height: 8), const Text('خلفية النص'), colors(x, 'bg', () { ss(() {}); up(); })])),
+      const SizedBox(height: 8), const Text('خلفية النص'), colors(x, 'bg', () { ss(() {}); up(); }),
+      const SizedBox(height: 8), const Text('تأثيرات'), chips(['بدون', 'توهج', 'عوم', 'نبض', 'اهتزاز', 'لمعان'], (x['fx'] ?? 0) as int, (i) { x['fx'] = i; ss(() {}); up(); })])),
     actions: [TextButton(onPressed: () => Navigator.pop(d), child: const Text('تم'))])));
 }
 
@@ -90,16 +98,60 @@ class Poly extends CustomPainter {
   bool shouldRepaint(_) => true;
 }
 
+class Fx extends StatefulWidget {
+  final int k; final Widget child;
+  const Fx(this.k, this.child, {super.key});
+  @override
+  State<Fx> createState() => _F();
+}
+class _F extends State<Fx> with SingleTickerProviderStateMixin {
+  late final AnimationController a = AnimationController(vsync: this, duration: const Duration(milliseconds: 1100));
+  void go() { if (widget.k == 0) { a.stop(); } else if (!a.isAnimating) { a.repeat(reverse: true); } }
+  @override
+  void initState() { super.initState(); go(); }
+  @override
+  void didUpdateWidget(Fx o) { super.didUpdateWidget(o); go(); }
+  @override
+  void dispose() { a.dispose(); super.dispose(); }
+  @override
+  Widget build(BuildContext c) {
+    if (widget.k == 0) return widget.child;
+    return AnimatedBuilder(animation: a, child: widget.child, builder: (_, w) {
+      final v = a.value;
+      switch (widget.k) {
+        case 1: return DecoratedBox(decoration: BoxDecoration(borderRadius: BorderRadius.circular(14), boxShadow: [BoxShadow(color: Color(th.acc).withOpacity(.4 + .6 * v), blurRadius: 8 + 22 * v, spreadRadius: 2 * v)]), child: w);
+        case 2: return Transform.translate(offset: Offset(0, -10 * v), child: w);
+        case 3: return Transform.scale(scale: 1 + .1 * v, child: w);
+        case 4: return Transform.rotate(angle: .08 * (v * 2 - 1), child: w);
+        default: return ShaderMask(blendMode: BlendMode.srcATop, shaderCallback: (r) => LinearGradient(colors: const [Colors.white, Color(0xFFFFF59D), Colors.white], stops: [(v - .25).clamp(0.0, 1.0), v, (v + .25).clamp(0.0, 1.0)]).createShader(r), child: w);
+      }
+    });
+  }
+}
+
+class Frame extends CustomPainter {
+  final Color c; final double t;
+  Frame(this.c, this.t);
+  @override
+  void paint(Canvas g, Size z) {
+    final rr = RRect.fromRectAndRadius((Offset.zero & z).deflate(4), const Radius.circular(22));
+    g.drawRRect(rr, Paint()..color = c.withOpacity(.45 + .45 * t)..style = PaintingStyle.stroke..strokeWidth = 26..maskFilter = const MaskFilter.blur(BlurStyle.normal, 18));
+    g.drawRRect(rr, Paint()..color = c..style = PaintingStyle.stroke..strokeWidth = 5);
+  }
+  @override
+  bool shouldRepaint(Frame o) => true;
+}
+
 Widget box(Map x, Quiz? q, VoidCallback? ed, {double? w, double? h, int s = 0, double r = 10}) {
   final st = TextStyle(fontSize: dn(x['sz']), color: Color(x['fg']), height: 1.3);
   final side = BorderSide(color: Color(th.acc), width: 2);
   final txt = q == null ? Text(x['t'] == '' ? '…' : x['t'], style: st, textAlign: TextAlign.center) : q.field(x, st);
   final inner = Center(child: Padding(padding: const EdgeInsets.all(8), child: txt));
-  final Widget core = s > 2
+  final Widget core = s == -2 ? inner : s > 2
       ? CustomPaint(painter: Poly(s, Color(x['bg']), side.color), child: inner)
       : DecoratedBox(decoration: ShapeDecoration(color: Color(x['bg']), shape: s == -1 ? OvalBorder(side: side) : RoundedRectangleBorder(borderRadius: BorderRadius.circular(r), side: side),
           shadows: th.glow ? [BoxShadow(color: Color(th.acc), blurRadius: 14)] : null), child: inner);
-  return GestureDetector(onTap: ed, child: SizedBox(width: w ?? 120, height: h ?? 56, child: core));
+  return GestureDetector(onTap: ed, child: Fx((x['fx'] ?? 0) as int, SizedBox(width: w ?? 120, height: h ?? 56, child: core)));
 }
 
 Widget item(Map it, Quiz? q, bool edit, VoidCallback up, BuildContext c, [VoidCallback? del]) {
@@ -114,14 +166,18 @@ Widget item(Map it, Quiz? q, bool edit, VoidCallback up, BuildContext c, [VoidCa
 class Quiz {
   final bad = ValueNotifier<int>(0);
   final ctl = <Map, TextEditingController>{};
-  bool ghost = false;
+  bool ghost = false, done = false, cheat = false;
+  VoidCallback? onDone;
   Widget field(Map x, TextStyle st) {
     final k = ctl.putIfAbsent(x, () => TextEditingController());
     return Stack(alignment: Alignment.center, children: [
       if (ghost) Opacity(opacity: .3, child: Text(x['t'], style: st)),
       TextField(controller: k, style: st, textAlign: TextAlign.center, decoration: const InputDecoration.collapsed(hintText: ''), onChanged: (_) { tap(); check(); })]);
   }
-  void check() => bad.value = ctl.entries.where((e) => !(e.key['t'] as String).startsWith(e.value.text)).length;
+  void check() {
+    bad.value = ctl.entries.where((e) => !(e.key['t'] as String).startsWith(e.value.text)).length;
+    if (!done && !cheat && bad.value == 0 && ctl.isNotEmpty && ctl.entries.every((e) => e.key['t'] == e.value.text)) { done = true; onDone?.call(); }
+  }
   int help() {
     var n = 0;
     ctl.forEach((x, k) {
@@ -138,6 +194,7 @@ class Quiz {
   }
   int solve() {
     var n = 0;
+    cheat = true;
     ctl.forEach((x, k) { if (k.text != x['t']) { n++; k.text = x['t']; } });
     check();
     return n;
@@ -150,19 +207,36 @@ class QuizPage extends StatefulWidget {
   @override
   State<QuizPage> createState() => _Q();
 }
-class _Q extends State<QuizPage> {
+class _Q extends State<QuizPage> with SingleTickerProviderStateMixin {
   final q = Quiz();
+  late final AnimationController a = AnimationController(vsync: this, duration: const Duration(milliseconds: 900))..repeat(reverse: true);
+  @override
+  void initState() {
+    super.initState();
+    q.onDone = () { saat(); showDialog(context: context, builder: (d) => AlertDialog(title: const Text('أحسنت! 🎉'), content: const Text('أجبت كل الخانات صح'), actions: [TextButton(onPressed: () => Navigator.pop(d), child: const Text('حسنًا'))])); };
+  }
+  @override
+  void dispose() { a.dispose(); super.dispose(); }
   @override
   Widget build(BuildContext c) => Scaffold(backgroundColor: Color(widget.p['bg']),
-    body: ValueListenableBuilder<int>(valueListenable: q.bad, builder: (_, b, __) => AnimatedContainer(duration: const Duration(milliseconds: 250),
-      decoration: BoxDecoration(border: Border.all(color: b > 0 ? Colors.red : Colors.green, width: 8)),
+    body: ValueListenableBuilder<int>(valueListenable: q.bad, builder: (_, b, __) => AnimatedBuilder(animation: a,
+      builder: (_, ch) => CustomPaint(foregroundPainter: Frame(b > 0 ? const Color(0xFFFF1744) : const Color(0xFF00E676), a.value), child: ch),
       child: SafeArea(child: Column(children: [
         Row(children: [
           IconButton(icon: const Icon(Icons.close), color: Colors.black, onPressed: () => Navigator.pop(c)),
-          TextButton(onPressed: () => toast(c, 'تم حذف ${q.help()} خطأ'), child: const Text('مساعدة')),
-          IconButton(icon: const Text('💡', style: TextStyle(fontSize: 22)), onPressed: () => toast(c, 'تم تصحيح ${q.solve()} خانة')),
-          IconButton(icon: const Text('🔎', style: TextStyle(fontSize: 22)), onPressed: () => setState(() => q.ghost = !q.ghost))]),
+          TextButton(onPressed: () { saat(); toast(c, 'تم حذف ${q.help()} خطأ'); }, child: const Text('مساعدة')),
+          IconButton(icon: const Text('💡', style: TextStyle(fontSize: 22)), onPressed: () { saat(); toast(c, 'تم تصحيح ${q.solve()} خانة'); }),
+          IconButton(icon: const Text('🔎', style: TextStyle(fontSize: 22)), onPressed: () { tap(); setState(() => q.ghost = !q.ghost); })]),
         Expanded(child: InteractiveViewer(constrained: false, minScale: .2, maxScale: 4, boundaryMargin: const EdgeInsets.all(600), child: PV(widget.p, q, false, () {})))])))));
+}
+
+double colW(Map d, List rows, int i) {
+  final cw = (d['cw'] ??= <dynamic>[]) as List;
+  while (cw.length <= i) { cw.add(null); }
+  if (cw[i] != null) return dn(cw[i]);
+  double w = 130;
+  for (final r in rows) { if (i < r.length) w = m.max(w, fw(r[i])); }
+  return w;
 }
 
 class PV extends StatelessWidget {
@@ -172,6 +246,7 @@ class PV extends StatelessWidget {
   Widget tree(BuildContext c, Map n, List? sib) {
     final k = n['k'] as List, x = n['c'] as Map;
     final line = Container(width: 2, height: 18, color: Color(th.acc));
+    final Widget conn = edit ? line : Icon(Icons.arrow_downward, size: 20, color: Color(th.acc));
     return Column(mainAxisSize: MainAxisSize.min, children: [
       box(x, q, ed(c, x), w: fw(x), h: fh(x)),
       if (edit) Row(mainAxisSize: MainAxisSize.min, children: [
@@ -180,12 +255,11 @@ class PV extends StatelessWidget {
       if (k.isNotEmpty) line,
       if (k.isNotEmpty) Row(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
         for (final e in k) Container(decoration: BoxDecoration(border: Border(top: BorderSide(color: Color(th.acc), width: 2))),
-          child: Padding(padding: const EdgeInsets.symmetric(horizontal: 6), child: Column(mainAxisSize: MainAxisSize.min, children: [line, tree(c, e, k)])))])]);
+          child: Padding(padding: const EdgeInsets.symmetric(horizontal: 6), child: Column(mainAxisSize: MainAxisSize.min, children: [conn, tree(c, e, k)])))])]);
   }
-  @override
-  Widget build(BuildContext c) {
+  Widget body(BuildContext c) {
     final d = p['d'] as Map;
-    const pad = EdgeInsets.all(80);
+    const pad = EdgeInsets.all(32);
     switch (p['type']) {
       case 'tree':
         return Padding(padding: pad, child: tree(c, d, null));
@@ -194,20 +268,31 @@ class PV extends StatelessWidget {
       case 'table':
         final rows = d['rows'] as List;
         return Padding(padding: pad, child: Column(mainAxisSize: MainAxisSize.min, children: [
-          for (final r in rows) Row(mainAxisSize: MainAxisSize.min, children: [
-            for (final x in r) Padding(padding: const EdgeInsets.all(2), child: box(x, q, ed(c, x), w: m.max(130.0, fw(x)), h: fh(x))),
-            if (edit) IconButton(icon: const Icon(Icons.add_circle), onPressed: () { r.add(nc()); up(); }),
-            if (edit && rows.length > 1) IconButton(icon: const Icon(Icons.remove_circle_outline), onPressed: () { rows.remove(r); up(); })]),
+          for (int ri = 0; ri < rows.length; ri++) Row(mainAxisSize: MainAxisSize.min, children: [
+            for (int i = 0; i < rows[ri].length; i++) Stack(clipBehavior: Clip.none, children: [
+              box(rows[ri][i], q, ed(c, rows[ri][i]), w: colW(d, rows, i), h: rowH(rows[ri]), r: 0),
+              if (edit && ri == 0) Positioned(right: -9, top: 0, bottom: 0, child: GestureDetector(
+                onPanUpdate: (e) { (d['cw'] as List)[i] = m.max(60.0, colW(d, rows, i) + e.delta.dx); up(); },
+                child: const Center(child: CircleAvatar(radius: 9, child: Icon(Icons.swap_horiz, size: 12)))))]),
+            if (edit) IconButton(icon: const Icon(Icons.add_circle), onPressed: () { rows[ri].add(nc()); up(); }),
+            if (edit && rows.length > 1) IconButton(icon: const Icon(Icons.remove_circle_outline), onPressed: () { rows.removeAt(ri); up(); })]),
           if (edit) IconButton(icon: const Icon(Icons.add_circle), onPressed: () { rows.add([for (final _ in rows.last) nc()]); up(); })]));
       case 'pyr':
         final cells = d['cells'] as List;
         return Padding(padding: pad, child: Column(mainAxisSize: MainAxisSize.min, children: [
           for (int i = 0; i < cells.length; i++) Padding(padding: const EdgeInsets.all(2), child: box(cells[i], q, ed(c, cells[i]), w: m.max(90.0 + i * 28, fw(cells[i])), h: fh(cells[i])))]));
       default:
-        final its = d['s'] as List;
-        return SizedBox(width: 1600, height: 1600, child: Stack(children: [
-          for (final it in its) Positioned(left: dn(it['x']), top: dn(it['y']), child: Drag(it, its, edit, up, item(it, q, edit, up, c, () { its.remove(it); up(); })))]));
+        return const SizedBox.shrink();
     }
+  }
+  @override
+  Widget build(BuildContext c) {
+    final fl = flist(p);
+    return GestureDetector(
+      onLongPressStart: edit ? (e) { final it = si(txtP, e.localPosition.dx, e.localPosition.dy); fl.add(it); up(); editCell(c, it['c'], up); } : null,
+      child: Stack(children: [
+        ConstrainedBox(constraints: const BoxConstraints(minWidth: 1100, minHeight: 1300), child: Align(alignment: Alignment.topCenter, child: body(c))),
+        for (final it in fl) Positioned(left: dn(it['x']), top: dn(it['y']), child: Drag(it, fl, edit, up, item(it, q, edit, up, c, () { fl.remove(it); up(); })))]));
   }
 }
 
@@ -238,17 +323,17 @@ class ProjPage extends StatefulWidget {
   State<ProjPage> createState() => _P();
 }
 class _P extends State<ProjPage> {
-  final tc = TransformationController();
+  final tc = TransformationController(Matrix4.identity()..scale(.7));
   void up() { save(); setState(() {}); }
   void zoom(double f) => tc.value = tc.value.clone()..scale(f);
   void addShape() => showModalBottomSheet(context: context, builder: (d) => ListView(children: [
-    for (final s in shapes) ListTile(title: Text(s['n'] as String), onTap: () {
+    for (final s in [txtP, ...shapes]) ListTile(leading: Icon(s['s'] == -2 ? Icons.text_fields : Icons.category), title: Text(s['n'] as String), onTap: () {
       Navigator.pop(d);
-      final it = si(s, 300, 300);
-      final l = widget.p['d']['s'] as List;
+      final it = si(s, 200, 200);
+      final l = flist(widget.p);
       for (int i = 0; i < 300 && hit(it, l); i++) {
         it['x'] = dn(it['x']) + 40;
-        if (dn(it['x']) > 1400) { it['x'] = 0.0; it['y'] = dn(it['y']) + 40; }
+        if (dn(it['x']) > 1000) { it['x'] = 0.0; it['y'] = dn(it['y']) + 40; }
       }
       l.add(it);
       up();
@@ -261,11 +346,11 @@ class _P extends State<ProjPage> {
         IconButton(icon: const Icon(Icons.zoom_in), onPressed: () => zoom(1.25)),
         IconButton(icon: const Icon(Icons.zoom_out), onPressed: () => zoom(.8)),
         if (widget.dev) IconButton(icon: const Icon(Icons.palette), onPressed: () => showDialog(context: c, builder: (d) => StatefulBuilder(builder: (d, ss) => AlertDialog(title: const Text('خلفية الصفحة'), content: colors(p, 'bg', () { ss(() {}); up(); }))))),
-        if (widget.dev) TextButton(onPressed: () { save(); Navigator.pop(c); }, child: const Text('حفظ الدرس'))]),
-      floatingActionButton: widget.dev && p['type'] == 'shape' ? FloatingActionButton(onPressed: addShape, child: const Text('◆', style: TextStyle(fontSize: 26))) : null,
+        if (widget.dev) TextButton(onPressed: () { saat(); save(); Navigator.pop(c); }, child: const Text('حفظ الدرس'))]),
+      floatingActionButton: widget.dev ? FloatingActionButton(onPressed: addShape, child: const Text('◆', style: TextStyle(fontSize: 26))) : null,
       body: Stack(children: [
         InteractiveViewer(transformationController: tc, constrained: false, minScale: .2, maxScale: 4, boundaryMargin: const EdgeInsets.all(600), child: PV(p, null, widget.dev, up)),
-        if (!widget.dev) Positioned(bottom: 20, left: 20, right: 20, child: SizedBox(height: 64, child: FilledButton(onPressed: () => go(c, QuizPage(p)), child: const Text('اختبار', style: TextStyle(fontSize: 24)))))]));
+        if (!widget.dev) Positioned(bottom: 20, left: 20, right: 20, child: SizedBox(height: 64, child: FilledButton(onPressed: () { saat(); go(c, QuizPage(p)); }, child: const Text('اختبار', style: TextStyle(fontSize: 24)))))]));
   }
 }
 
@@ -299,6 +384,20 @@ class _H extends State<Home> {
   void create(BuildContext c) => showModalBottomSheet(context: c, builder: (d) => SafeArea(child: Column(mainAxisSize: MainAxisSize.min, children: [
     for (final t in [['tree', 'شجرة متفرعة'], ['card', 'بطاقة'], ['table', 'جدول'], ['shape', 'تشكيل']])
       ListTile(leading: Icon(icons[t[0]]), title: Text(t[1]), onTap: () async { Navigator.pop(d); await setup(c, t[0]); setState(() {}); })])));
+  void imp(BuildContext c) async {
+    final t = await ask(c, 'الصق الدرس هنا');
+    if (t == null || t.isEmpty) return;
+    try {
+      final j = jsonDecode(t) as Map;
+      if (j['name'] == null || j['d'] == null) throw 0;
+      projects.add(j);
+      save();
+      setState(() {});
+      if (c.mounted) toast(c, 'تمت إضافة الدرس');
+    } catch (_) {
+      if (c.mounted) toast(c, 'النص غير صالح');
+    }
+  }
   Future<void> setup(BuildContext c, String type) async {
     final k = TextEditingController();
     int opt = 0;
@@ -337,6 +436,7 @@ class _H extends State<Home> {
   Widget build(BuildContext c) => Scaffold(
     appBar: AppBar(title: const Text('ALSESI'), actions: [
       Glow(child: TextButton(onPressed: () => pick(c), child: const Text('اختبار', style: TextStyle(fontWeight: FontWeight.bold)))),
+      IconButton(icon: const Icon(Icons.file_download), onPressed: () => imp(c)),
       IconButton(icon: const Icon(Icons.settings), onPressed: () => settings(c))]),
     floatingActionButton: widget.dev ? FloatingActionButton(onPressed: () => create(c), child: const Icon(Icons.add)) : null,
     body: projects.isEmpty
@@ -344,13 +444,19 @@ class _H extends State<Home> {
       : ListView(padding: const EdgeInsets.all(12), children: [
           for (final p in projects) Card(child: ListTile(
             leading: Icon(icons[p['type']]), title: Text(p['name'], style: const TextStyle(fontSize: 20)),
-            trailing: widget.dev ? IconButton(icon: const Icon(Icons.delete_outline), onPressed: () async { if (await sure(c)) { projects.remove(p); save(); setState(() {}); } }) : null,
-            onTap: () async { tap(); await go(c, ProjPage(p, widget.dev)); setState(() {}); }))]));
+            trailing: widget.dev ? PopupMenuButton<int>(
+              onSelected: (v) async {
+                if (v == 0) { Clipboard.setData(ClipboardData(text: jsonEncode(p))); toast(c, 'تم نسخ الدرس. أرسله لطلابك ليلصقوه بزر الاستيراد'); }
+                else if (v == 1) { final cp = jsonDecode(jsonEncode(p)) as Map; cp['name'] = '${p['name']} (نسخة)'; projects.add(cp); save(); setState(() {}); }
+                else if (await sure(c)) { projects.remove(p); save(); setState(() {}); }
+              },
+              itemBuilder: (_) => const [PopupMenuItem(value: 0, child: Text('نسخ للمشاركة')), PopupMenuItem(value: 1, child: Text('تكرار')), PopupMenuItem(value: 2, child: Text('حذف'))]) : null,
+            onTap: () async { saat(); await go(c, ProjPage(p, widget.dev)); setState(() {}); }))]));
 }
 
 class Login extends StatelessWidget {
   const Login({super.key});
-  Widget big(String t, VoidCallback f) => SizedBox(width: 300, height: 76, child: FilledButton(style: FilledButton.styleFrom(textStyle: const TextStyle(fontSize: 24)), onPressed: () { tap(); f(); }, child: Text(t)));
+  Widget big(String t, VoidCallback f) => SizedBox(width: 300, height: 76, child: FilledButton(style: FilledButton.styleFrom(textStyle: const TextStyle(fontSize: 24)), onPressed: () { saat(); f(); }, child: Text(t)));
   @override
   Widget build(BuildContext c) => Scaffold(body: Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
     Text('ALSESI', style: TextStyle(fontSize: 44, fontWeight: FontWeight.w800, color: Color(th.acc))),
