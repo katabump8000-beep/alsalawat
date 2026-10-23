@@ -42,7 +42,7 @@ $('aiForm').addEventListener('submit', async e => {
   answer.textContent = 'جارٍ إرسال السؤال إلى المساعد...';
   btn.disabled = true;
 
-  const GEMINI_API_KEY = "AQ.Ab8RN6KQJfDb-GAuOKPBQqg_425wHCpg2KTL7H6u2Fg33OYF3g";
+  const GEMINI_API_KEY = "AQ.Ab8RN6IW6TJkiHPW_iyVxfZFkUDqkMa_DRvh5P2q7cGQyRcbDA";
   const subjectName = subjects.find(s => s.id === selected).name;
   const prompt = `أنت مساعد دراسي عربي لطالب يستعد للبكالوريا. أجب باللغة العربية الواضحة وبأسلوب تعليمي مناسب للمرحلة الثانوية. في الأسئلة المدرسية، اشرح الخطوات ولا تختلق معلومات. المادة المختارة: ${subjectName}\n\nسؤال الطالب:\n${q}`;
 
