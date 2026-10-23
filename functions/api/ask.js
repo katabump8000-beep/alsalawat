@@ -1,9 +1,10 @@
 export async function onRequestPost(context) {
   try {
-    const { request, env } = context;
-    if (!env.GEMINI_API_KEY) {
-      return Response.json({ error: "Missing server secret GEMINI_API_KEY" }, { status: 500 });
-    }
+    const { request } = context;
+    
+    // وضع المفتاح الخاص بك مباشرة هنا
+    const GEMINI_API_KEY = "AQ.Ab8RN6KQJfDb-GAuOKPBQqg_425wHCpg2KTL7H6u2Fg33OYF3g";
+
     const body = await request.json();
     const question = typeof body.question === "string" ? body.question.trim() : "";
     const subject = typeof body.subject === "string" ? body.subject.trim() : "الدراسة";
@@ -11,13 +12,14 @@ export async function onRequestPost(context) {
     if (question.length > 8000) return Response.json({ error: "السؤال طويل جداً." }, { status: 400 });
 
     const prompt = `أنت مساعد دراسي عربي لطالب يستعد للبكالوريا. أجب باللغة العربية الواضحة وبأسلوب تعليمي مناسب للمرحلة الثانوية. في الأسئلة المدرسية، اشرح الخطوات ولا تختلق معلومات. المادة المختارة: ${subject}\n\nسؤال الطالب:\n${question}`;
+    
     const upstream = await fetch(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent",
       {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-goog-api-key": env.GEMINI_API_KEY
+          "x-goog-api-key": GEMINI_API_KEY
         },
         body: JSON.stringify({
           contents: [{ role: "user", parts: [{ text: prompt }] }],
@@ -25,6 +27,7 @@ export async function onRequestPost(context) {
         })
       }
     );
+    
     const result = await upstream.json();
     if (!upstream.ok) {
       return Response.json({ error: "تعذر الحصول على إجابة من Gemini. تحقق من المفتاح وإعدادات الخدمة." }, { status: upstream.status });
