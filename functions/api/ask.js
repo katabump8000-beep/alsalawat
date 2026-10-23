@@ -1,5 +1,5 @@
 // ضع مفتاحك هنا مباشرة كما طلبَت
-const GEMINI_API_KEY = "AQ.Ab8RN6KQJfDb-GAuOKPBQqg_425wHCpg2KTL7H6u2Fg33OYF3g";
+const GEMINI_API_KEY = "AQ.Ab8RN6IW6TJkiHPW_iyVxfZFkUDqkMa_DRvh5P2q7cGQyRcbDA";
 
 async function askAI(promptText) {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
