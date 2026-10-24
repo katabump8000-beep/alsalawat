@@ -2,7 +2,11 @@ import 'dart:convert';
 import 'dart:math' as m;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'dart:ui' as ui;
 import 'package:audioplayers/audioplayers.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 const devPass = 'hamzanjar8000.H';
@@ -27,12 +31,16 @@ final _st = AudioPlayer();
 void tap() { HapticFeedback.selectionClick(); _ck.play(AssetSource('click.mp3')).catchError((_) {}); }
 void saat() { HapticFeedback.mediumImpact(); _st.play(AssetSource('saat.mp3')).catchError((_) {}); }
 double dn(x) => (x as num).toDouble();
-Map nc([double sz = 18, int bg = 0xFFFFFFFF]) => {'t': '', 'fg': 0xFF000000, 'bg': bg, 'sz': sz};
+Map nc([double sz = 22, int bg = 0xFFFFFFFF]) => {'t': '', 'fg': 0xFF000000, 'bg': bg, 'sz': sz};
 double fw(Map x) => m.max(90.0, (x['t'] as String).length * dn(x['sz']) * .55 + 30);
 double fh(Map x) => dn(x['sz']) * 1.9 + 10;
 double rowH(List r) => r.fold<double>(40, (a, x) => m.max(a, fh(x)));
 const txtP = {'n': 'نص حر', 'w': 220.0, 'h': 60.0, 's': -2, 'r': 0.0};
 List flist(Map p) => p['type'] == 'shape' ? p['d']['s'] as List : (p['f'] ??= []) as List;
+const pgW = 600.0, pgH = 849.0;
+int pages(Map p) => (p['pg'] ?? 1) as int;
+final selN = ValueNotifier<Map?>(null);
+double _acc = 0;
 
 const shapes = [
   {'n': 'مستطيل كبير', 'w': 280.0, 'h': 140.0, 's': 0, 'r': 10.0},
@@ -50,7 +58,7 @@ const shapes = [
   {'n': 'معيّن', 'w': 160.0, 'h': 160.0, 's': 4, 'r': 0.0},
   {'n': 'خماسي', 'w': 160.0, 'h': 160.0, 's': 5, 'r': 0.0},
   {'n': 'سداسي', 'w': 170.0, 'h': 150.0, 's': 6, 'r': 0.0}];
-Map si(Map s, double x, double y) => {'w': s['w'], 'h': s['h'], 's': s['s'], 'r': s['r'], 'x': x, 'y': y, 'c': s['s'] == -2 ? nc(22, 0x00FFFFFF) : nc()};
+Map si(Map s, double x, double y) => {'w': s['w'], 'h': s['h'], 's': s['s'], 'r': s['r'], 'x': x, 'y': y, 'c': s['s'] == -2 ? nc(26, 0x00FFFFFF) : nc()};
 Rect rect(Map o) => Rect.fromLTWH(dn(o['x']), dn(o['y']), dn(o['w']), dn(o['h']));
 bool hit(Map it, List all) => all.any((o) => !identical(o, it) && rect(it).overlaps(rect(o)));
 
@@ -67,9 +75,9 @@ Future<String?> ask(BuildContext c, String t, {bool pw = false}) {
 Future<bool> sure(BuildContext c) async => (await showDialog<bool>(context: c, builder: (d) => AlertDialog(title: const Text('تأكيد الحذف؟'),
   actions: [TextButton(onPressed: () => Navigator.pop(d, false), child: const Text('لا')), FilledButton(onPressed: () => Navigator.pop(d, true), child: const Text('حذف'))]))) ?? false;
 
-void editCell(BuildContext c, Map x, VoidCallback up) {
+Future editCell(BuildContext c, Map x, VoidCallback up) {
   final k = TextEditingController(text: x['t']);
-  showDialog(context: c, builder: (d) => StatefulBuilder(builder: (d, ss) => AlertDialog(
+  return showDialog(context: c, builder: (d) => StatefulBuilder(builder: (d, ss) => AlertDialog(
     content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
       TextField(controller: k, maxLines: null, autofocus: true, style: TextStyle(fontSize: dn(x['sz']), color: Color(x['fg'])), onChanged: (v) { x['t'] = v; up(); }),
       Slider(value: dn(x['sz']), min: 12, max: 60, onChanged: (v) { x['sz'] = v; ss(() {}); up(); }),
@@ -142,12 +150,12 @@ class Frame extends CustomPainter {
   bool shouldRepaint(Frame o) => true;
 }
 
-Widget box(Map x, Quiz? q, VoidCallback? ed, {double? w, double? h, int s = 0, double r = 10}) {
+Widget box(Map x, Quiz? q, VoidCallback? ed, {double? w, double? h, int s = 0, double r = 10, bool top = false}) {
   final st = TextStyle(fontSize: dn(x['sz']), color: Color(x['fg']), height: 1.3);
   final side = BorderSide(color: Color(th.acc), width: 2);
-  final txt = q == null ? Text(x['t'] == '' ? '…' : x['t'], style: st, textAlign: TextAlign.center) : q.field(x, st);
-  final inner = Center(child: Padding(padding: const EdgeInsets.all(8), child: txt));
-  final Widget core = s == -2 ? inner : s > 2
+  final txt = q == null ? Text(x['t'] == '' ? '…' : x['t'], style: st, textAlign: top ? TextAlign.start : TextAlign.center) : q.field(x, st, !top);
+  final inner = Align(alignment: top ? AlignmentDirectional.topStart : Alignment.center, child: Padding(padding: const EdgeInsets.all(8), child: txt));
+  final Widget core = s == -2 ? DecoratedBox(decoration: BoxDecoration(color: Color(x['bg']), borderRadius: BorderRadius.circular(8)), child: inner) : s > 2
       ? CustomPaint(painter: Poly(s, Color(x['bg']), side.color), child: inner)
       : DecoratedBox(decoration: ShapeDecoration(color: Color(x['bg']), shape: s == -1 ? OvalBorder(side: side) : RoundedRectangleBorder(borderRadius: BorderRadius.circular(r), side: side),
           shadows: th.glow ? [BoxShadow(color: Color(th.acc), blurRadius: 14)] : null), child: inner);
@@ -155,12 +163,66 @@ Widget box(Map x, Quiz? q, VoidCallback? ed, {double? w, double? h, int s = 0, d
 }
 
 Widget item(Map it, Quiz? q, bool edit, VoidCallback up, BuildContext c, [VoidCallback? del]) {
-  final b = box(it['c'], q, edit ? () => editCell(c, it['c'], up) : null, w: dn(it['w']), h: dn(it['h']), s: it['s'], r: dn(it['r']));
+  final s = it['s'] as int;
+  final b = box(it['c'], q, edit ? () => editCell(c, it['c'], up) : null, w: dn(it['w']), h: dn(it['h']), s: s, r: dn(it['r']), top: s == 0 || s == -2);
   if (!edit) return b;
-  return Stack(clipBehavior: Clip.none, children: [b,
-    Positioned(right: -10, bottom: -10, child: GestureDetector(onPanUpdate: (e) { it['w'] = m.max(50.0, dn(it['w']) + e.delta.dx); it['h'] = m.max(40.0, dn(it['h']) + e.delta.dy); up(); },
-      child: const CircleAvatar(radius: 12, child: Icon(Icons.open_in_full, size: 14)))),
-    if (del != null) Positioned(left: -10, top: -10, child: GestureDetector(onTap: del, child: const CircleAvatar(radius: 12, backgroundColor: Colors.red, child: Icon(Icons.close, size: 14, color: Colors.white))))]);
+  return ValueListenableBuilder<Map?>(valueListenable: selN, builder: (_, sel, __) {
+    final on = identical(sel, it);
+    return Stack(clipBehavior: Clip.none, children: [
+      GestureDetector(onLongPress: () { HapticFeedback.heavyImpact(); selN.value = it; }, child: b),
+      if (on) Positioned(right: -14, bottom: -14, child: GestureDetector(onPanUpdate: (e) { it['w'] = m.max(50.0, dn(it['w']) + e.delta.dx); it['h'] = m.max(40.0, dn(it['h']) + e.delta.dy); up(); },
+        child: const CircleAvatar(radius: 16, child: Icon(Icons.open_in_full, size: 16)))),
+      if (on && del != null) Positioned(left: -14, top: -14, child: GestureDetector(onTap: del, child: const CircleAvatar(radius: 16, backgroundColor: Colors.red, child: Icon(Icons.close, size: 16, color: Colors.white))))]);
+  });
+}
+
+class Ruled extends CustomPainter {
+  final Color bg; final bool lines, sep; final int n;
+  Ruled(this.bg, this.lines, this.sep, this.n);
+  @override
+  void paint(Canvas g, Size z) {
+    g.drawRect(Offset.zero & z, Paint()..color = bg);
+    if (lines) {
+      final pn = Paint()..color = (bg.computeLuminance() < .4 ? Colors.white : Colors.black).withOpacity(.07)..strokeWidth = 1;
+      for (double y = 40; y < z.height; y += 34) { g.drawLine(Offset(0, y), Offset(z.width, y), pn); }
+    }
+    if (sep) {
+      final ps = Paint()..color = Colors.grey.withOpacity(.6)..strokeWidth = 2;
+      for (int k = 1; k < n; k++) { g.drawLine(Offset(0, k * pgH), Offset(z.width, k * pgH), ps); }
+    }
+  }
+  @override
+  bool shouldRepaint(Ruled o) => true;
+}
+
+Future<ui.Image> snap(BuildContext c, Map p) async {
+  final key = GlobalKey();
+  final e = OverlayEntry(builder: (_) => Positioned(left: -9999, top: 0, child: Directionality(textDirection: TextDirection.rtl,
+    child: RepaintBoundary(key: key, child: Material(color: Color(p['bg']), child: PV(p, null, false, () {}, pr: true))))));
+  Overlay.of(c).insert(e);
+  await WidgetsBinding.instance.endOfFrame;
+  await WidgetsBinding.instance.endOfFrame;
+  final img = await (key.currentContext!.findRenderObject() as RenderRepaintBoundary).toImage(pixelRatio: 2);
+  e.remove();
+  return img;
+}
+
+Future<void> exportPdf(BuildContext c, List<Map> ps) async {
+  toast(c, 'جاري تجهيز ملف PDF…');
+  final doc = pw.Document();
+  for (final p in ps) {
+    final img = await snap(c, p);
+    final r = img.width / pgW;
+    for (int k = 0; k < pages(p); k++) {
+      final rec = ui.PictureRecorder();
+      Canvas(rec).drawImageRect(img, Rect.fromLTWH(0, k * pgH * r, img.width.toDouble(), pgH * r), Rect.fromLTWH(0, 0, img.width.toDouble(), pgH * r), Paint());
+      final cr = await rec.endRecording().toImage(img.width, (pgH * r).round());
+      final bd = await cr.toByteData(format: ui.ImageByteFormat.png);
+      final bytes = bd!.buffer.asUint8List();
+      doc.addPage(pw.Page(pageFormat: PdfPageFormat.a4, margin: pw.EdgeInsets.zero, build: (_) => pw.Image(pw.MemoryImage(bytes), fit: pw.BoxFit.fill)));
+    }
+  }
+  await Printing.sharePdf(bytes: await doc.save(), filename: 'ALSESI.pdf');
 }
 
 class Quiz {
@@ -168,11 +230,11 @@ class Quiz {
   final ctl = <Map, TextEditingController>{};
   bool ghost = false, done = false, cheat = false;
   VoidCallback? onDone;
-  Widget field(Map x, TextStyle st) {
+  Widget field(Map x, TextStyle st, [bool ctr = true]) {
     final k = ctl.putIfAbsent(x, () => TextEditingController());
-    return Stack(alignment: Alignment.center, children: [
+    return Stack(alignment: ctr ? Alignment.center : AlignmentDirectional.topStart, children: [
       if (ghost) Opacity(opacity: .3, child: Text(x['t'], style: st)),
-      TextField(controller: k, style: st, textAlign: TextAlign.center, decoration: const InputDecoration.collapsed(hintText: ''), onChanged: (_) { tap(); check(); })]);
+      TextField(controller: k, style: st, maxLines: null, textAlign: ctr ? TextAlign.center : TextAlign.start, decoration: const InputDecoration.collapsed(hintText: ''), onChanged: (_) { tap(); check(); })]);
   }
   void check() {
     bad.value = ctl.entries.where((e) => !(e.key['t'] as String).startsWith(e.value.text)).length;
@@ -209,6 +271,8 @@ class QuizPage extends StatefulWidget {
 }
 class _Q extends State<QuizPage> with SingleTickerProviderStateMixin {
   final q = Quiz();
+  final tc = TransformationController();
+  bool inited = false;
   late final AnimationController a = AnimationController(vsync: this, duration: const Duration(milliseconds: 900))..repeat(reverse: true);
   @override
   void initState() {
@@ -218,16 +282,20 @@ class _Q extends State<QuizPage> with SingleTickerProviderStateMixin {
   @override
   void dispose() { a.dispose(); super.dispose(); }
   @override
-  Widget build(BuildContext c) => Scaffold(backgroundColor: Color(widget.p['bg']),
-    body: ValueListenableBuilder<int>(valueListenable: q.bad, builder: (_, b, __) => AnimatedBuilder(animation: a,
-      builder: (_, ch) => CustomPaint(foregroundPainter: Frame(b > 0 ? const Color(0xFFFF1744) : const Color(0xFF00E676), a.value), child: ch),
-      child: SafeArea(child: Column(children: [
-        Row(children: [
-          IconButton(icon: const Icon(Icons.close), color: Colors.black, onPressed: () => Navigator.pop(c)),
-          TextButton(onPressed: () { saat(); toast(c, 'تم حذف ${q.help()} خطأ'); }, child: const Text('مساعدة')),
-          IconButton(icon: const Text('💡', style: TextStyle(fontSize: 22)), onPressed: () { saat(); toast(c, 'تم تصحيح ${q.solve()} خانة'); }),
-          IconButton(icon: const Text('🔎', style: TextStyle(fontSize: 22)), onPressed: () { tap(); setState(() => q.ghost = !q.ghost); })]),
-        Expanded(child: InteractiveViewer(constrained: false, minScale: .2, maxScale: 4, boundaryMargin: const EdgeInsets.all(600), child: PV(widget.p, q, false, () {})))])))));
+  Widget build(BuildContext c) {
+    final fit = MediaQuery.of(c).size.width / pgW;
+    if (!inited) { inited = true; tc.value = Matrix4.identity()..scale(fit); }
+    return Scaffold(backgroundColor: Color(widget.p['bg']),
+      body: ValueListenableBuilder<int>(valueListenable: q.bad, builder: (_, b, __) => AnimatedBuilder(animation: a,
+        builder: (_, ch) => CustomPaint(foregroundPainter: Frame(b > 0 ? const Color(0xFFFF1744) : const Color(0xFF00E676), a.value), child: ch),
+        child: SafeArea(child: Column(children: [
+          Row(children: [
+            IconButton(icon: const Icon(Icons.close), color: Colors.black, onPressed: () => Navigator.pop(c)),
+            TextButton(onPressed: () { saat(); toast(c, 'تم حذف ${q.help()} خطأ'); }, child: const Text('مساعدة')),
+            IconButton(icon: const Text('💡', style: TextStyle(fontSize: 22)), onPressed: () { saat(); toast(c, 'تم تصحيح ${q.solve()} خانة'); }),
+            IconButton(icon: const Text('🔎', style: TextStyle(fontSize: 22)), onPressed: () { tap(); setState(() => q.ghost = !q.ghost); })]),
+          Expanded(child: InteractiveViewer(transformationController: tc, constrained: false, minScale: fit, maxScale: fit * 4, boundaryMargin: EdgeInsets.zero, child: PV(widget.p, q, false, () {})))])))));
+  }
 }
 
 double colW(Map d, List rows, int i) {
@@ -240,13 +308,13 @@ double colW(Map d, List rows, int i) {
 }
 
 class PV extends StatelessWidget {
-  final Map p; final Quiz? q; final bool edit; final VoidCallback up;
-  const PV(this.p, this.q, this.edit, this.up, {super.key});
+  final Map p; final Quiz? q; final bool edit, pr; final VoidCallback up;
+  const PV(this.p, this.q, this.edit, this.up, {this.pr = false, super.key});
   VoidCallback? ed(BuildContext c, Map x) => edit ? () => editCell(c, x, up) : null;
   Widget tree(BuildContext c, Map n, List? sib) {
     final k = n['k'] as List, x = n['c'] as Map;
-    final line = Container(width: 2, height: 18, color: Color(th.acc));
-    final Widget conn = edit ? line : Icon(Icons.arrow_downward, size: 20, color: Color(th.acc));
+    final line = Container(width: 2, height: 30, color: Color(th.acc));
+    final Widget conn = edit ? Container(width: 2, height: 36, color: Color(th.acc)) : SizedBox(height: 36, child: Icon(Icons.arrow_downward, size: 30, color: Color(th.acc)));
     return Column(mainAxisSize: MainAxisSize.min, children: [
       box(x, q, ed(c, x), w: fw(x), h: fh(x)),
       if (edit) Row(mainAxisSize: MainAxisSize.min, children: [
@@ -255,11 +323,11 @@ class PV extends StatelessWidget {
       if (k.isNotEmpty) line,
       if (k.isNotEmpty) Row(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
         for (final e in k) Container(decoration: BoxDecoration(border: Border(top: BorderSide(color: Color(th.acc), width: 2))),
-          child: Padding(padding: const EdgeInsets.symmetric(horizontal: 6), child: Column(mainAxisSize: MainAxisSize.min, children: [conn, tree(c, e, k)])))])]);
+          child: Padding(padding: const EdgeInsets.symmetric(horizontal: 20), child: Column(mainAxisSize: MainAxisSize.min, children: [conn, tree(c, e, k)])))])]);
   }
   Widget body(BuildContext c) {
     final d = p['d'] as Map;
-    const pad = EdgeInsets.all(32);
+    const pad = EdgeInsets.all(24);
     switch (p['type']) {
       case 'tree':
         return Padding(padding: pad, child: tree(c, d, null));
@@ -267,16 +335,20 @@ class PV extends StatelessWidget {
         return Padding(padding: pad, child: item(d['i'], q, edit, up, c));
       case 'table':
         final rows = d['rows'] as List;
-        return Padding(padding: pad, child: Column(mainAxisSize: MainAxisSize.min, children: [
-          for (int ri = 0; ri < rows.length; ri++) Row(mainAxisSize: MainAxisSize.min, children: [
-            for (int i = 0; i < rows[ri].length; i++) Stack(clipBehavior: Clip.none, children: [
-              box(rows[ri][i], q, ed(c, rows[ri][i]), w: colW(d, rows, i), h: rowH(rows[ri]), r: 0),
-              if (edit && ri == 0) Positioned(right: -9, top: 0, bottom: 0, child: GestureDetector(
-                onPanUpdate: (e) { (d['cw'] as List)[i] = m.max(60.0, colW(d, rows, i) + e.delta.dx); up(); },
-                child: const Center(child: CircleAvatar(radius: 9, child: Icon(Icons.swap_horiz, size: 12)))))]),
-            if (edit) IconButton(icon: const Icon(Icons.add_circle), onPressed: () { rows[ri].add(nc()); up(); }),
-            if (edit && rows.length > 1) IconButton(icon: const Icon(Icons.remove_circle_outline), onPressed: () { rows.removeAt(ri); up(); })]),
-          if (edit) IconButton(icon: const Icon(Icons.add_circle), onPressed: () { rows.add([for (final _ in rows.last) nc()]); up(); })]));
+        return Padding(padding: pad, child: ValueListenableBuilder<Map?>(valueListenable: selN, builder: (_, sel, __) {
+          final on = edit && identical(sel, d);
+          return Column(mainAxisSize: MainAxisSize.min, children: [
+            for (int ri = 0; ri < rows.length; ri++) Row(mainAxisSize: MainAxisSize.min, children: [
+              for (int i = 0; i < rows[ri].length; i++) Stack(clipBehavior: Clip.none, children: [
+                GestureDetector(onLongPress: edit ? () { HapticFeedback.heavyImpact(); selN.value = d; } : null,
+                  child: box(rows[ri][i], q, ed(c, rows[ri][i]), w: colW(d, rows, i), h: rowH(rows[ri]), r: 0)),
+                if (on && ri == 0) Positioned(right: -14, top: 0, bottom: 0, child: GestureDetector(
+                  onPanUpdate: (e) { (d['cw'] as List)[i] = m.max(60.0, colW(d, rows, i) + e.delta.dx); up(); },
+                  child: const Center(child: CircleAvatar(radius: 14, child: Icon(Icons.swap_horiz, size: 16)))))]),
+              if (edit) IconButton(icon: const Icon(Icons.add_circle), onPressed: () { rows[ri].add(nc()); up(); }),
+              if (edit && rows.length > 1) IconButton(icon: const Icon(Icons.remove_circle_outline), onPressed: () { rows.removeAt(ri); up(); })]),
+            if (edit) IconButton(icon: const Icon(Icons.add_circle), onPressed: () { rows.add([for (final _ in rows.last) nc()]); up(); })]);
+        }));
       case 'pyr':
         final cells = d['cells'] as List;
         return Padding(padding: pad, child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -288,11 +360,25 @@ class PV extends StatelessWidget {
   @override
   Widget build(BuildContext c) {
     final fl = flist(p);
-    return GestureDetector(
-      onLongPressStart: edit ? (e) { final it = si(txtP, e.localPosition.dx, e.localPosition.dy); fl.add(it); up(); editCell(c, it['c'], up); } : null,
-      child: Stack(children: [
-        ConstrainedBox(constraints: const BoxConstraints(minWidth: 1100, minHeight: 1300), child: Align(alignment: Alignment.topCenter, child: body(c))),
-        for (final it in fl) Positioned(left: dn(it['x']), top: dn(it['y']), child: Drag(it, fl, edit, up, item(it, q, edit, up, c, () { fl.remove(it); up(); })))]));
+    final n = pages(p);
+    return SizedBox(width: pgW, height: pgH * n, child: Stack(children: [
+      Positioned.fill(child: GestureDetector(behavior: HitTestBehavior.opaque,
+        onTapUp: edit ? (e) {
+          selN.value = null;
+          final it = si(txtP, m.min(e.localPosition.dx, pgW - 230), e.localPosition.dy);
+          fl.add(it);
+          up();
+          editCell(c, it['c'], up).then((_) { if ((it['c']['t'] as String).isEmpty) { fl.remove(it); up(); } });
+        } : null,
+        child: CustomPaint(painter: Ruled(Color(p['bg']), p['ln'] != false, !pr, n)))),
+      Positioned(top: 0, left: 0, right: 0, child: FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.topCenter, child: body(c))),
+      for (final it in fl) Positioned(left: dn(it['x']), top: dn(it['y']), child: Drag(it, fl, edit, up, item(it, q, edit, up, c, () { fl.remove(it); up(); }))),
+      if (edit) Positioned(left: 0, right: 0, bottom: 0, height: 36, child: GestureDetector(
+        onVerticalDragUpdate: (e) {
+          _acc += e.delta.dy;
+          if (_acc > 60) { p['pg'] = n + 1; _acc = 0; up(); } else if (_acc < -60 && n > 1) { p['pg'] = n - 1; _acc = 0; up(); }
+        },
+        child: Container(color: Color(th.acc).withOpacity(.18), child: Center(child: Text('⌄  اسحب هنا لتكبير الصفحة  ⌄', style: TextStyle(fontSize: 14, color: Color(th.acc)))))))]));
   }
 }
 
@@ -323,9 +409,21 @@ class ProjPage extends StatefulWidget {
   State<ProjPage> createState() => _P();
 }
 class _P extends State<ProjPage> {
-  final tc = TransformationController(Matrix4.identity()..scale(.7));
+  final tc = TransformationController();
+  double fit = 1;
+  bool inited = false;
   void up() { save(); setState(() {}); }
-  void zoom(double f) => tc.value = tc.value.clone()..scale(f);
+  void zoom(double f) {
+    final cur = tc.value.getMaxScaleOnAxis();
+    final n = (cur * f).clamp(fit, fit * 4).toDouble();
+    tc.value = tc.value.clone()..scale(n / cur);
+  }
+  void nav(int dlt) {
+    final i = projects.indexOf(widget.p) + dlt;
+    if (i < 0 || i >= projects.length) return;
+    saat();
+    Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => ProjPage(projects[i], widget.dev)));
+  }
   void addShape() => showModalBottomSheet(context: context, builder: (d) => ListView(children: [
     for (final s in [txtP, ...shapes]) ListTile(leading: Icon(s['s'] == -2 ? Icons.text_fields : Icons.category), title: Text(s['n'] as String), onTap: () {
       Navigator.pop(d);
@@ -333,7 +431,7 @@ class _P extends State<ProjPage> {
       final l = flist(widget.p);
       for (int i = 0; i < 300 && hit(it, l); i++) {
         it['x'] = dn(it['x']) + 40;
-        if (dn(it['x']) > 1000) { it['x'] = 0.0; it['y'] = dn(it['y']) + 40; }
+        if (dn(it['x']) > 360) { it['x'] = 0.0; it['y'] = dn(it['y']) + 40; }
       }
       l.add(it);
       up();
@@ -341,16 +439,28 @@ class _P extends State<ProjPage> {
   @override
   Widget build(BuildContext c) {
     final p = widget.p;
+    fit = MediaQuery.of(c).size.width / pgW;
+    if (!inited) { inited = true; tc.value = Matrix4.identity()..scale(fit); }
     return Scaffold(backgroundColor: Color(p['bg']),
       appBar: AppBar(title: Text(p['name']), actions: [
         IconButton(icon: const Icon(Icons.zoom_in), onPressed: () => zoom(1.25)),
         IconButton(icon: const Icon(Icons.zoom_out), onPressed: () => zoom(.8)),
-        if (widget.dev) IconButton(icon: const Icon(Icons.palette), onPressed: () => showDialog(context: c, builder: (d) => StatefulBuilder(builder: (d, ss) => AlertDialog(title: const Text('خلفية الصفحة'), content: colors(p, 'bg', () { ss(() {}); up(); }))))),
+        PopupMenuButton<int>(
+          onSelected: (v) {
+            if (v == 0) { exportPdf(c, [p]); }
+            else if (v == 1) { showDialog(context: c, builder: (d) => StatefulBuilder(builder: (d, ss) => AlertDialog(title: const Text('خلفية الصفحة'), content: colors(p, 'bg', () { ss(() {}); up(); })))); }
+            else { p['ln'] = p['ln'] == false; up(); }
+          },
+          itemBuilder: (_) => [const PopupMenuItem(value: 0, child: Text('تنزيل PDF')), if (widget.dev) const PopupMenuItem(value: 1, child: Text('خلفية الصفحة')), if (widget.dev) const PopupMenuItem(value: 2, child: Text('خطوط الدفتر'))]),
         if (widget.dev) TextButton(onPressed: () { saat(); save(); Navigator.pop(c); }, child: const Text('حفظ الدرس'))]),
       floatingActionButton: widget.dev ? FloatingActionButton(onPressed: addShape, child: const Text('◆', style: TextStyle(fontSize: 26))) : null,
+      bottomNavigationBar: SafeArea(child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+        TextButton(onPressed: () => nav(-1), child: const Text('🔜', style: TextStyle(fontSize: 28))),
+        Text('${projects.indexOf(p) + 1} / ${projects.length}'),
+        TextButton(onPressed: () => nav(1), child: const Text('🔚', style: TextStyle(fontSize: 28)))])),
       body: Stack(children: [
-        InteractiveViewer(transformationController: tc, constrained: false, minScale: .2, maxScale: 4, boundaryMargin: const EdgeInsets.all(600), child: PV(p, null, widget.dev, up)),
-        if (!widget.dev) Positioned(bottom: 20, left: 20, right: 20, child: SizedBox(height: 64, child: FilledButton(onPressed: () { saat(); go(c, QuizPage(p)); }, child: const Text('اختبار', style: TextStyle(fontSize: 24)))))]));
+        InteractiveViewer(transformationController: tc, constrained: false, minScale: fit, maxScale: fit * 4, boundaryMargin: EdgeInsets.zero, child: PV(p, null, widget.dev, up)),
+        if (!widget.dev) Positioned(bottom: 12, left: 20, right: 20, child: SizedBox(height: 60, child: FilledButton(onPressed: () { saat(); go(c, QuizPage(p)); }, child: const Text('اختبار', style: TextStyle(fontSize: 24)))))]));
   }
 }
 
@@ -378,6 +488,9 @@ class Home extends StatefulWidget {
 class _H extends State<Home> {
   void pick(BuildContext c) => showDialog(context: c, builder: (d) => SimpleDialog(title: const Text('اختر درسًا للاختبار'), children: [
     for (final p in projects) SimpleDialogOption(onPressed: () { Navigator.pop(d); go(c, QuizPage(p)); }, child: Text(p['name'], style: const TextStyle(fontSize: 18)))]));
+  void pdfPick(BuildContext c) => showDialog(context: c, builder: (d) => SimpleDialog(title: const Text('تنزيل PDF للطباعة'), children: [
+    SimpleDialogOption(onPressed: () { Navigator.pop(d); exportPdf(c, List<Map>.from(projects)); }, child: const Text('كل الدروس (ملخص واحد)', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold))),
+    for (final p in projects) SimpleDialogOption(onPressed: () { Navigator.pop(d); exportPdf(c, [p]); }, child: Text(p['name'], style: const TextStyle(fontSize: 18)))]));
   void settings(BuildContext c) => showDialog(context: c, builder: (d) => SimpleDialog(title: const Text('الإعدادات: النماذج'), children: [
     for (int i = 0; i < themes.length; i++) ListTile(title: Text('نموذج ${i + 1}: ${themes[i].n}'), trailing: themeN.value == i ? const Icon(Icons.check) : null,
       onTap: () { themeN.value = i; prefs.setInt('t', i); Navigator.pop(d); })]));
@@ -416,7 +529,7 @@ class _H extends State<Home> {
     Map d;
     var t = type;
     if (type == 'tree') {
-      d = {'c': nc([34.0, 24.0, 18.0][opt]), 'k': []};
+      d = {'c': nc([40.0, 30.0, 22.0][opt]), 'k': []};
     } else if (type == 'card') {
       d = {'i': si(shapes[opt], 0, 0)};
     } else if (type == 'table' && opt == 4) {
@@ -436,6 +549,7 @@ class _H extends State<Home> {
   Widget build(BuildContext c) => Scaffold(
     appBar: AppBar(title: const Text('ALSESI'), actions: [
       Glow(child: TextButton(onPressed: () => pick(c), child: const Text('اختبار', style: TextStyle(fontWeight: FontWeight.bold)))),
+      IconButton(icon: const Icon(Icons.picture_as_pdf), onPressed: () => pdfPick(c)),
       IconButton(icon: const Icon(Icons.file_download), onPressed: () => imp(c)),
       IconButton(icon: const Icon(Icons.settings), onPressed: () => settings(c))]),
     floatingActionButton: widget.dev ? FloatingActionButton(onPressed: () => create(c), child: const Icon(Icons.add)) : null,
