@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../constants.dart';
 import '../models.dart';
 import '../services/pdf_export.dart';
+import '../services/sheet_render.dart' show LinesPainter, firstBaseline;
 import '../services/sound.dart';
 import '../utils.dart';
 
@@ -17,8 +18,6 @@ const double _footerBlock = 28;
 const double _lineFactor = 1.8;
 const String _fontFamily = 'NotoSansArabic';
 
-/// يُنزل الخط عن أسفل صندوق السطر ليلامس أسفل الحروف تماماً (عدّله بين 0.10 و 0.30 إن لزم).
-const double _lineDrop = 0.22;
 
 const List<Color> _inkPalette = [
   paperInk,
@@ -65,9 +64,9 @@ class _EditorScreenState extends State<EditorScreen> {
 
   int _active = 0;
   double _zoom = 1.0;
-  double _fontPt = 13;
-  double _lineOpacity = .12;
-  Color _inkColor = paperInk;
+  late double _fontPt = widget.lesson.fontPt;
+  late double _lineOpacity = widget.lesson.lineOpacity;
+  late Color _inkColor = Color(widget.lesson.inkColor);
   late double _wmSize = widget.lesson.wmSize;
   late double _wmOpacity = widget.lesson.wmOpacity;
   late Color _wmColor = Color(widget.lesson.wmColor);
@@ -308,6 +307,9 @@ class _EditorScreenState extends State<EditorScreen> {
     l.watermark = _watermark.text;
     l.footerNote = _footer.text;
     l.videoUrl = _video.text.trim();
+    l.fontPt = _fontPt;
+    l.lineOpacity = _lineOpacity;
+    l.inkColor = _inkColor.toARGB32();
     l.wmSize = _wmSize;
     l.wmOpacity = _wmOpacity;
     l.wmColor = _wmColor.toARGB32();
@@ -326,7 +328,7 @@ class _EditorScreenState extends State<EditorScreen> {
   Future<void> _exportPdf() async {
     await _save(silent: true);
     try {
-      await exportLessonPdf(widget.lesson, fontSize: _fontPt);
+      await exportLessonPdf(widget.lesson);
     } catch (e) {
       if (mounted) showMessage(context, 'تعذر إنشاء PDF: $e');
     }
@@ -691,9 +693,10 @@ class _EditorScreenState extends State<EditorScreen> {
                   painter: LinesPainter(
                     opacity: _lineOpacity,
                     lineHeight: _fontPt * _lineFactor * scale,
-                    topInset: pad + titleH,
+                    textTop: pad + titleH,
+                    baseline: firstBaseline(_fontPt, scale),
+                    gap: _fontPt * .18 * scale,
                     bottomInset: pad + footerH,
-                    drop: _lineDrop,
                   ),
                 ),
               ),
@@ -887,40 +890,4 @@ class _EditorScreenState extends State<EditorScreen> {
       ),
     );
   }
-}
-
-class LinesPainter extends CustomPainter {
-  LinesPainter({
-    required this.opacity,
-    required this.lineHeight,
-    required this.topInset,
-    required this.bottomInset,
-    this.drop = 0,
-  });
-
-  final double opacity;
-  final double lineHeight;
-  final double topInset;
-  final double bottomInset;
-  final double drop;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = Colors.blueGrey.withValues(alpha: opacity)
-      ..strokeWidth = .8;
-    final limit = size.height - bottomInset + 0.5;
-    for (double y = topInset + lineHeight; y <= limit; y += lineHeight) {
-      final yy = y - lineHeight * drop;
-      canvas.drawLine(Offset(0, yy), Offset(size.width, yy), paint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant LinesPainter old) =>
-      old.opacity != opacity ||
-      old.lineHeight != lineHeight ||
-      old.topInset != topInset ||
-      old.bottomInset != bottomInset ||
-      old.drop != drop;
 }
