@@ -5,8 +5,9 @@ import 'package:printing/printing.dart';
 
 import '../models.dart';
 
-/// يصدّر الدرس إلى PDF بصفحات A4. النص الطويل ينتقل تلقائياً لصفحة جديدة.
-Future<void> exportLessonPdf(Lesson lesson) async {
+/// يصدّر الدرس إلى PDF بصفحات A4 مطابقة لصفحات المحرر.
+/// كل صفحة في المحرر = صفحة جديدة في PDF، والنص الزائد ينتقل تلقائياً.
+Future<void> exportLessonPdf(Lesson lesson, {double fontSize = 13}) async {
   final fontData = await rootBundle.load('assets/fonts/NotoSansArabic-Regular.ttf');
   final font = pw.Font.ttf(fontData);
   final theme = pw.ThemeData.withFont(
@@ -33,7 +34,7 @@ Future<void> exportLessonPdf(Lesson lesson) async {
         stripAnswerMarkers(lesson.pages[i]),
         textDirection: pw.TextDirection.rtl,
         textAlign: pw.TextAlign.right,
-        style: pw.TextStyle(fontSize: 13, lineSpacing: 8),
+        style: pw.TextStyle(fontSize: fontSize, lineSpacing: fontSize * 0.6),
       ),
     );
   }
@@ -58,10 +59,7 @@ Future<void> exportLessonPdf(Lesson lesson) async {
                     child: pw.Text(
                       watermark,
                       textDirection: pw.TextDirection.rtl,
-                      style: pw.TextStyle(
-                        fontSize: 38,
-                        color: PdfColors.grey,
-                      ),
+                      style: pw.TextStyle(fontSize: 38, color: PdfColors.grey),
                     ),
                   ),
                 ),
@@ -78,18 +76,18 @@ Future<void> exportLessonPdf(Lesson lesson) async {
               style: pw.TextStyle(fontSize: 8, color: PdfColors.grey),
             ),
           pw.SizedBox(height: 4),
-          pw.Text(
-            '${context.pageNumber}',
-            style: pw.TextStyle(fontSize: 10),
-          ),
+          pw.Text('${context.pageNumber}', style: pw.TextStyle(fontSize: 10)),
         ],
       ),
     ),
   );
 
   final bytes = await doc.save();
-  await Printing.layoutPdf(
-    name: lesson.title.trim().isEmpty ? 'lesson' : lesson.title.trim(),
-    onLayout: (format) async => bytes,
-  );
+  final name = lesson.title.trim().isEmpty ? 'lesson' : lesson.title.trim();
+  try {
+    await Printing.layoutPdf(name: name, onLayout: (format) async => bytes);
+  } catch (_) {
+    // بديل: مشاركة الملف مباشرة (حفظ/واتساب/ملفات) إن فشلت نافذة الطباعة.
+    await Printing.sharePdf(bytes: bytes, filename: '$name.pdf');
+  }
 }
