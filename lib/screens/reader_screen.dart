@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '../models.dart';
+import '../services/object_widgets.dart';
 import '../services/pdf_export.dart';
+import '../services/rich_controller.dart';
 import '../services/sound.dart';
 import '../utils.dart';
 
@@ -33,6 +35,12 @@ class _ReaderScreenState extends State<ReaderScreen> {
   List<TextEditingController> _inputs = [];
 
   String get _rawPage => widget.lesson.pages[_page];
+
+  List<int> get _runs =>
+      _page < widget.lesson.pageRuns.length ? widget.lesson.pageRuns[_page] : const [];
+
+  List<PageObject> get _objs =>
+      _page < widget.lesson.pageObjects.length ? widget.lesson.pageObjects[_page] : const [];
 
   List<RegExpMatch> get _matches => answerPattern.allMatches(_rawPage).toList();
 
@@ -196,6 +204,20 @@ class _ReaderScreenState extends State<ReaderScreen> {
                         ),
                       ),
                     _quiz ? _buildQuiz() : _buildPlain(),
+                    for (final o in _objs)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 16),
+                        child: Center(
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: SizedBox(
+                              width: o.w,
+                              height: o.h,
+                              child: buildObjectWidget(o, 1),
+                            ),
+                          ),
+                        ),
+                      ),
                     if (lesson.footerNote.trim().isNotEmpty)
                       Padding(
                         padding: const EdgeInsets.only(top: 28),
@@ -223,9 +245,13 @@ class _ReaderScreenState extends State<ReaderScreen> {
   }
 
   Widget _buildPlain() {
-    return Text(
-      stripAnswerMarkers(_rawPage),
-      style: TextStyle(color: paperInk, fontSize: _size, height: 1.8),
+    final raw = _rawPage;
+    final f = decodeRuns(raw.length, _runs);
+    return Text.rich(
+      TextSpan(
+        style: TextStyle(color: paperInk, fontSize: _size, height: 1.8),
+        children: richSpans(raw, f.fg, f.bg, strip: true),
+      ),
     );
   }
 
@@ -239,6 +265,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       );
     }
 
+    final f = decodeRuns(raw.length, _runs);
     final spans = <InlineSpan>[];
     var last = 0;
     var correctCount = 0;
@@ -246,7 +273,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       final m = matches[i];
       final expected = m.group(1) ?? '';
       if (_normalize(_inputs[i].text) == _normalize(expected)) correctCount++;
-      spans.add(TextSpan(text: stripAnswerMarkers(raw.substring(last, m.start))));
+      spans.addAll(richSpans(raw, f.fg, f.bg, start: last, end: m.start, strip: true));
       spans.add(
         WidgetSpan(
           alignment: PlaceholderAlignment.middle,
@@ -255,7 +282,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       );
       last = m.end;
     }
-    spans.add(TextSpan(text: stripAnswerMarkers(raw.substring(last))));
+    spans.addAll(richSpans(raw, f.fg, f.bg, start: last, strip: true));
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,

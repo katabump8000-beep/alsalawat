@@ -1,12 +1,18 @@
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
 import '../constants.dart';
 import '../models.dart';
+import '../services/media.dart';
+import '../services/object_widgets.dart';
 import '../services/pdf_export.dart';
+import '../services/rich_controller.dart';
 import '../services/sheet_render.dart' show LinesPainter, firstBaseline;
 import '../services/sound.dart';
+import '../services/storage.dart';
+import '../services/symbols.dart';
 import '../utils.dart';
 
 /// أبعاد صفحة A4 بالنقاط (نفس أبعاد PDF) ليتطابق المحرر مع الملف الناتج.
@@ -15,7 +21,6 @@ const double _a4Ratio = 1.4142;
 const double _margin = 42;
 const double _titleBlock = 46;
 const double _footerBlock = 28;
-const double _lineFactor = 1.8;
 const String _fontFamily = 'NotoSansArabic';
 
 
@@ -42,6 +47,18 @@ const List<Color> _inkPalette = [
   Colors.grey,
 ];
 
+final List<Color> _allColors = [
+  for (final m in Colors.primaries) ...[m.shade200, m.shade500, m.shade800],
+  Colors.black,
+  Colors.white,
+  const Color(0xff424242),
+  const Color(0xff757575),
+  const Color(0xffbdbdbd),
+  const Color(0xff795548),
+  const Color(0xff3e2723),
+  const Color(0xff00695c),
+];
+
 class EditorScreen extends StatefulWidget {
   const EditorScreen({super.key, required this.lesson, required this.onSave});
 
@@ -58,7 +75,13 @@ class _EditorScreenState extends State<EditorScreen> {
   late final TextEditingController _footer = TextEditingController(text: widget.lesson.footerNote);
   late final TextEditingController _video = TextEditingController(text: widget.lesson.videoUrl);
 
-  final List<TextEditingController> _pages = [];
+  final List<RichController> _pages = [];
+  final List<List<PageObject>> _objects = [];
+  late double _lineFactor = widget.lesson.lineFactor;
+  late String _coverFront = widget.lesson.coverFront;
+  late String _coverBack = widget.lesson.coverBack;
+  bool _fgMode = true;
+  List<String> _favSymbols = [];
   final List<UndoHistoryController> _undos = [];
   final List<FocusNode> _nodes = [];
 
@@ -78,9 +101,16 @@ class _EditorScreenState extends State<EditorScreen> {
   @override
   void initState() {
     super.initState();
-    for (final text in widget.lesson.pages) {
-      _addPageObjects(text);
+    for (var i = 0; i < widget.lesson.pages.length; i++) {
+      _addPageObjects(
+        widget.lesson.pages[i],
+        widget.lesson.pageRuns[i],
+        List<PageObject>.of(widget.lesson.pageObjects[i]),
+      );
     }
+    AppStorage.loadFavSymbols().then((v) {
+      if (mounted) setState(() => _favSymbols = v.toList());
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted && _reflowAll()) setState(() => _dirty = true);
     });
@@ -102,14 +132,15 @@ class _EditorScreenState extends State<EditorScreen> {
 
   // ---------------------------------------------------------------- pages
 
-  void _addPageObjects(String text) {
+  void _addPageObjects(String text, [List<int>? runs, List<PageObject>? objs]) {
     final node = FocusNode();
     node.addListener(() {
       if (!node.hasFocus) return;
       final idx = _nodes.indexOf(node);
       if (idx >= 0 && idx != _active && mounted) setState(() => _active = idx);
     });
-    _pages.add(TextEditingController(text: text));
+    _pages.add(RichController(text: text, runs: runs));
+    _objects.add(objs ?? <PageObject>[]);
     _undos.add(UndoHistoryController());
     _nodes.add(node);
   }
@@ -151,6 +182,7 @@ class _EditorScreenState extends State<EditorScreen> {
       final c = _pages.removeAt(index);
       final u = _undos.removeAt(index);
       final n = _nodes.removeAt(index);
+      _objects.removeAt(index);
       _disposeLater([c, u, n]);
       if (_active >= _pages.length) _active = _pages.length - 1;
       _dirty = true;
@@ -244,9 +276,13 @@ class _EditorScreenState extends State<EditorScreen> {
         final cursor = sel.isValid ? sel.baseOffset : -1;
 
         var tail = text.substring(cut);
+        var tfg = ctrl.fg.sublist(cut);
+        var tbg = ctrl.bg.sublist(cut);
         var removed = 0;
         if (tail.startsWith('\n')) {
           tail = tail.substring(1);
+          tfg = tfg.sublist(1);
+          tbg = tbg.sublist(1);
           removed = 1;
         }
         if (idx + 1 >= _pages.length) {
@@ -254,23 +290,22 @@ class _EditorScreenState extends State<EditorScreen> {
         }
         final next = _pages[idx + 1];
         final merged = next.text.isEmpty ? tail : '$tail\n${next.text}';
+        final mfg = next.text.isEmpty ? tfg : [...tfg, 0, ...next.fg];
+        final mbg = next.text.isEmpty ? tbg : [...tbg, 0, ...next.bg];
+        final headFg = ctrl.fg.sublist(0, cut);
+        final headBg = ctrl.bg.sublist(0, cut);
 
         final cursorMoves = cursor > cut;
-        ctrl.value = TextEditingValue(
-          text: text.substring(0, cut),
-          selection: TextSelection.collapsed(
-            offset: cursor < 0 ? cut : math.min(cursor, cut),
-          ),
+        ctrl.setContent(
+          text.substring(0, cut),
+          headFg,
+          headBg,
+          TextSelection.collapsed(offset: cursor < 0 ? cut : math.min(cursor, cut)),
         );
         final nextCursor = cursorMoves
             ? math.max(0, math.min(cursor - cut - removed, merged.length))
             : 0;
-        next.value = TextEditingValue(
-          text: merged,
-          selection: cursorMoves
-              ? TextSelection.collapsed(offset: nextCursor)
-              : const TextSelection.collapsed(offset: 0),
-        );
+        next.setContent(merged, mfg, mbg, TextSelection.collapsed(offset: nextCursor));
         if (cursorMoves) {
           final target = idx + 1;
           WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -316,6 +351,11 @@ class _EditorScreenState extends State<EditorScreen> {
     l.titleColor = _titleColor.toARGB32();
     l.titleBg = _titleBg.toARGB32();
     l.pages = _pages.map((p) => p.text).toList();
+    l.pageRuns = _pages.map((p) => encodeRuns(p.fg, p.bg)).toList();
+    l.pageObjects = _objects.map((e) => List<PageObject>.of(e)).toList();
+    l.lineFactor = _lineFactor;
+    l.coverFront = _coverFront;
+    l.coverBack = _coverBack;
     await widget.onSave();
     if (!mounted) return;
     setState(() => _dirty = false);
@@ -342,11 +382,7 @@ class _EditorScreenState extends State<EditorScreen> {
       return;
     }
     Sound.tap();
-    final selected = c.text.substring(s.start, s.end);
-    c.value = TextEditingValue(
-      text: c.text.replaceRange(s.start, s.end, '$answerOpen$selected$answerClose'),
-      selection: TextSelection.collapsed(offset: s.start + selected.length + 2),
-    );
+    c.wrap(s.start, s.end, answerOpen, answerClose);
     _onPageChanged(_active);
   }
 
@@ -374,26 +410,71 @@ class _EditorScreenState extends State<EditorScreen> {
 
   Future<Color?> _pickColor() => showModalBottomSheet<Color>(
         context: context,
-        builder: (ctx) => Padding(
-          padding: const EdgeInsets.all(16),
-          child: Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            children: [
-              for (final c in _inkPalette)
+        builder: (ctx) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: [
+                for (final c in _inkPalette)
+                  InkWell(
+                    onTap: () => Navigator.pop(ctx, c),
+                    child: CircleAvatar(radius: 18, backgroundColor: c),
+                  ),
                 InkWell(
-                  onTap: () => Navigator.pop(ctx, c),
-                  child: CircleAvatar(radius: 18, backgroundColor: c),
+                  onTap: () => Navigator.pop(ctx, const Color(0x00000000)),
+                  child: const CircleAvatar(
+                    radius: 18,
+                    backgroundColor: Colors.white24,
+                    child: Icon(Icons.block, size: 18),
+                  ),
                 ),
-              InkWell(
-                onTap: () => Navigator.pop(ctx, const Color(0x00000000)),
-                child: const CircleAvatar(
-                  radius: 18,
-                  backgroundColor: Colors.white24,
-                  child: Icon(Icons.block, size: 18),
+                InkWell(
+                  onTap: () async {
+                    final c = await _pickFromAll(ctx);
+                    if (c != null && ctx.mounted) Navigator.pop(ctx, c);
+                  },
+                  child: const CircleAvatar(
+                    radius: 18,
+                    backgroundColor: Colors.deepPurple,
+                    child: Icon(Icons.add, color: Colors.white),
+                  ),
                 ),
+              ],
+            ),
+          ),
+        ),
+      );
+
+  /// أكثر من 60 لوناً.
+  Future<Color?> _pickFromAll(BuildContext ctx) => showDialog<Color>(
+        context: ctx,
+        builder: (d) => AlertDialog(
+          title: const Text('كل الألوان'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: SingleChildScrollView(
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final c in _allColors)
+                    InkWell(
+                      onTap: () => Navigator.pop(d, c),
+                      child: Container(
+                        width: 34,
+                        height: 34,
+                        decoration: BoxDecoration(
+                          color: c,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white24),
+                        ),
+                      ),
+                    ),
+                ],
               ),
-            ],
+            ),
           ),
         ),
       );
@@ -487,6 +568,656 @@ class _EditorScreenState extends State<EditorScreen> {
     );
   }
 
+  // ------------------------------------------------------------ formatting
+
+  /// يلوّن المحدد فقط، أو يضبط لون ما سيُكتب لاحقاً دون المساس بما كُتب.
+  void _applyColor(Color c) {
+    final ctrl = _pages[_active];
+    final v = c.a == 0 ? 0 : c.toARGB32();
+    final sel = ctrl.selection;
+    if (sel.isValid && !sel.isCollapsed) {
+      if (_fgMode) {
+        ctrl.applyFg(sel.start, sel.end, v);
+      } else {
+        ctrl.applyBg(sel.start, sel.end, v);
+      }
+    } else if (_fgMode) {
+      ctrl.curFg = v;
+      ctrl.explicit = true;
+    } else {
+      ctrl.curBg = v;
+      ctrl.explicit = true;
+    }
+    setState(() => _dirty = true);
+  }
+
+  void _insertText(String t) {
+    final c = _pages[_active];
+    final sel = c.selection;
+    final a = sel.isValid ? sel.start : c.text.length;
+    final b = sel.isValid ? sel.end : c.text.length;
+    c.value = TextEditingValue(
+      text: c.text.replaceRange(a, b, t),
+      selection: TextSelection.collapsed(offset: a + t.length),
+    );
+    Sound.tap();
+    _onPageChanged(_active);
+    _nodes[_active].requestFocus();
+  }
+
+  Future<void> _toggleFav(String sym) async {
+    setState(() {
+      if (!_favSymbols.remove(sym)) _favSymbols.add(sym);
+    });
+    await AppStorage.saveFavSymbols(_favSymbols);
+  }
+
+  Future<void> _symbolsSheet() {
+    return showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, ss) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text('اضغط للإدراج • اضغط مطولاً لإضافة الرمز إلى الشريط أو إزالته'),
+                const SizedBox(height: 10),
+                Flexible(
+                  child: SingleChildScrollView(
+                    child: Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: [
+                        for (final sym in kSymbols)
+                          GestureDetector(
+                            onTap: () => _insertText(sym),
+                            onLongPress: () async {
+                              await _toggleFav(sym);
+                              ss(() {});
+                            },
+                            child: Container(
+                              width: 46,
+                              height: 46,
+                              alignment: Alignment.center,
+                              decoration: BoxDecoration(
+                                color: _favSymbols.contains(sym)
+                                    ? Colors.deepPurple.withValues(alpha: .45)
+                                    : Colors.white10,
+                                borderRadius: BorderRadius.circular(10),
+                                border: _favSymbols.contains(sym)
+                                    ? Border.all(color: Colors.deepPurpleAccent)
+                                    : null,
+                              ),
+                              child: Text(sym, style: const TextStyle(fontSize: 24)),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // -------------------------------------------------------------- objects
+
+  double get _pageH => _a4Width * _a4Ratio;
+
+  void _addObject(PageObject o) => setState(() {
+        _objects[_active].add(o);
+        _dirty = true;
+      });
+
+  void _addTable() {
+    Sound.tap();
+    final o = PageObject(
+      type: 'table',
+      x: _margin,
+      y: 200,
+      w: _a4Width - 2 * _margin,
+      h: 3 * 38,
+      rows: 3,
+      cols: 3,
+      cells: List<String>.generate(9, (_) => ''),
+    );
+    _addObject(o);
+    _editObject(_active, o);
+  }
+
+  Future<void> _addCard() async {
+    final shape = await showModalBottomSheet<String>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Wrap(
+          children: [
+            ListTile(
+              leading: const Icon(Icons.crop_square),
+              title: const Text('مستطيل'),
+              onTap: () => Navigator.pop(ctx, 'rect'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.square_outlined),
+              title: const Text('مربع'),
+              onTap: () => Navigator.pop(ctx, 'square'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.rounded_corner),
+              title: const Text('مستطيل بحواف دائرية'),
+              onTap: () => Navigator.pop(ctx, 'rounded'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.circle_outlined),
+              title: const Text('دائرة'),
+              onTap: () => Navigator.pop(ctx, 'circle'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (shape == null) return;
+    Sound.tap();
+    final equal = shape == 'square' || shape == 'circle';
+    final o = PageObject(
+      type: 'card',
+      shape: shape == 'square' ? 'rect' : shape,
+      x: 120,
+      y: 220,
+      w: equal ? 160 : 260,
+      h: equal ? 160 : 110,
+      fill: 0xfffff3b0,
+    );
+    _addObject(o);
+    _editObject(_active, o);
+  }
+
+  Future<void> _addImage() async {
+    try {
+      final r = await pickImageToApp();
+      if (r == null || !mounted) return;
+      const w = 300.0;
+      final h = (w * r.ratio).clamp(40.0, _pageH - 120).toDouble();
+      Sound.tap();
+      _addObject(PageObject(type: 'image', path: r.path, x: (_a4Width - w) / 2, y: 150, w: w, h: h));
+    } catch (_) {
+      if (mounted) showMessage(context, 'تعذر اختيار الصورة');
+    }
+  }
+
+  Widget _objectBox(int page, PageObject o, double scale) {
+    return Positioned(
+      left: o.x * scale,
+      top: o.y * scale,
+      width: o.w * scale,
+      height: o.h * scale,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => _editObject(page, o),
+        onPanUpdate: (d) => setState(() {
+          o.x = (o.x + d.delta.dx / scale).clamp(0.0, math.max(0.0, _a4Width - o.w)).toDouble();
+          o.y = (o.y + d.delta.dy / scale).clamp(0.0, math.max(0.0, _pageH - o.h)).toDouble();
+          _dirty = true;
+        }),
+        child: Stack(
+          children: [
+            Positioned.fill(child: buildObjectWidget(o, scale)),
+            Positioned.fill(
+              child: IgnorePointer(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    border: Border.all(color: Colors.deepPurpleAccent.withValues(alpha: .5)),
+                  ),
+                ),
+              ),
+            ),
+            Positioned(
+              right: 0,
+              bottom: 0,
+              child: GestureDetector(
+                onPanUpdate: (d) => setState(() {
+                  o.w = (o.w + d.delta.dx / scale).clamp(40.0, math.max(40.0, _a4Width - o.x)).toDouble();
+                  o.h = (o.h + d.delta.dy / scale).clamp(30.0, math.max(30.0, _pageH - o.y)).toDouble();
+                  _dirty = true;
+                }),
+                child: Container(
+                  width: 28,
+                  height: 28,
+                  decoration: const BoxDecoration(color: Colors.deepPurpleAccent, shape: BoxShape.circle),
+                  child: const Icon(Icons.open_in_full, size: 14, color: Colors.white),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _colorBtn(String label, int value, void Function(int) set, StateSetter ss) {
+    return OutlinedButton.icon(
+      onPressed: () async {
+        final c = await _pickColor();
+        if (c != null) {
+          setState(() => set(c.toARGB32()));
+          ss(() {});
+        }
+      },
+      icon: CircleAvatar(radius: 9, backgroundColor: Color(value)),
+      label: Text(label),
+    );
+  }
+
+  Future<void> _editObject(int page, PageObject o) async {
+    if (o.type == 'table') {
+      await _editTable(page, o);
+    } else if (o.type == 'image') {
+      await _editImage(page, o);
+    } else {
+      await _editCard(page, o);
+    }
+    if (mounted) setState(() => _dirty = true);
+  }
+
+  Future<void> _editCard(int page, PageObject o) async {
+    final text = TextEditingController(text: o.text);
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, ss) => AlertDialog(
+          title: const Text('البطاقة'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: text,
+                  minLines: 2,
+                  maxLines: 5,
+                  onChanged: (v) => setState(() => o.text = v),
+                  decoration: const InputDecoration(labelText: 'نص البطاقة'),
+                ),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 8,
+                  children: [
+                    for (final e in const {'rect': 'مستطيل', 'rounded': 'دائري الحواف', 'circle': 'دائرة'}.entries)
+                      ChoiceChip(
+                        label: Text(e.value),
+                        selected: o.shape == e.key,
+                        onSelected: (_) {
+                          setState(() => o.shape = e.key);
+                          ss(() {});
+                        },
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  children: [
+                    _colorBtn('خلفية البطاقة', o.fill, (v) => o.fill = v, ss),
+                    _colorBtn('لون النص', o.textColor, (v) => o.textColor = v, ss),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                _objects[page].remove(o);
+                Navigator.pop(ctx);
+              },
+              child: const Text('حذف'),
+            ),
+            FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('تم')),
+          ],
+        ),
+      ),
+    );
+    Future.delayed(const Duration(milliseconds: 600), text.dispose);
+  }
+
+  Future<void> _editTable(int page, PageObject o) async {
+    final all = <TextEditingController>[];
+    List<TextEditingController> mk() {
+      final l = [
+        for (var i = 0; i < o.rows * o.cols; i++)
+          TextEditingController(text: i < o.cells.length ? o.cells[i] : ''),
+      ];
+      all.addAll(l);
+      return l;
+    }
+
+    var ctrls = mk();
+    void commit() => o.cells = ctrls.map((c) => c.text).toList();
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, ss) {
+          void change(int dr, int dc) {
+            commit();
+            o.resize((o.rows + dr).clamp(1, 12).toInt(), (o.cols + dc).clamp(1, 8).toInt());
+            if (dr != 0) o.h = o.rows * 38.0;
+            ctrls = mk();
+            setState(() {});
+            ss(() {});
+          }
+
+          Widget stepper(String label, int value, int dr, int dc) => Row(
+                children: [
+                  SizedBox(width: 60, child: Text(label)),
+                  IconButton(onPressed: () => change(-dr, -dc), icon: const Icon(Icons.remove_circle_outline)),
+                  Text('$value'),
+                  IconButton(onPressed: () => change(dr, dc), icon: const Icon(Icons.add_circle_outline)),
+                ],
+              );
+
+          return AlertDialog(
+            title: const Text('الجدول'),
+            content: SizedBox(
+              width: double.maxFinite,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    stepper('الصفوف', o.rows, 1, 0),
+                    stepper('الأعمدة', o.cols, 0, 1),
+                    Wrap(
+                      spacing: 8,
+                      children: [
+                        _colorBtn('الصف الأول', o.header, (v) => o.header = v, ss),
+                        _colorBtn('الخلايا', o.fill, (v) => o.fill = v, ss),
+                        _colorBtn('النص', o.textColor, (v) => o.textColor = v, ss),
+                      ],
+                    ),
+                    const Divider(),
+                    for (var r = 0; r < o.rows; r++)
+                      Row(
+                        children: [
+                          for (var c = 0; c < o.cols; c++)
+                            Expanded(
+                              child: Padding(
+                                padding: const EdgeInsets.all(2),
+                                child: TextField(
+                                  controller: ctrls[r * o.cols + c],
+                                  style: const TextStyle(fontSize: 13),
+                                  onChanged: (_) {
+                                    commit();
+                                    setState(() {});
+                                  },
+                                  decoration: const InputDecoration(
+                                    isDense: true,
+                                    border: OutlineInputBorder(),
+                                    contentPadding: EdgeInsets.all(6),
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  _objects[page].remove(o);
+                  Navigator.pop(ctx);
+                },
+                child: const Text('حذف الجدول'),
+              ),
+              FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('تم')),
+            ],
+          );
+        },
+      ),
+    );
+    commit();
+    Future.delayed(const Duration(milliseconds: 600), () {
+      for (final c in all) {
+        c.dispose();
+      }
+    });
+  }
+
+  Future<void> _editImage(int page, PageObject o) async {
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('الصورة'),
+        content: const Text('اسحب الصورة لتحريكها، واسحب الدائرة في زاويتها لتغيير حجمها.'),
+        actions: [
+          TextButton(
+            onPressed: () {
+              _objects[page].remove(o);
+              Navigator.pop(ctx);
+            },
+            child: const Text('حذف'),
+          ),
+          TextButton(
+            onPressed: () async {
+              try {
+                final r = await pickImageToApp();
+                if (r != null) setState(() => o.path = r.path);
+              } catch (_) {}
+              if (ctx.mounted) Navigator.pop(ctx);
+            },
+            child: const Text('تبديل الصورة'),
+          ),
+          FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('تم')),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _coversSheet() {
+    return showModalBottomSheet<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, ss) {
+          Widget coverRow(String label, String path, void Function(String) set) {
+            final has = path.isNotEmpty && File(path).existsSync();
+            return ListTile(
+              leading: has
+                  ? ClipRRect(
+                      borderRadius: BorderRadius.circular(4),
+                      child: Image.file(File(path), width: 40, height: 56, fit: BoxFit.cover),
+                    )
+                  : const Icon(Icons.image_outlined, size: 36),
+              title: Text(label),
+              subtitle: Text(has ? 'تم اختيار صورة' : 'لا توجد صورة'),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    tooltip: 'رفع صورة',
+                    icon: const Icon(Icons.upload),
+                    onPressed: () async {
+                      try {
+                        final r = await pickImageToApp();
+                        if (r != null) {
+                          setState(() {
+                            set(r.path);
+                            _dirty = true;
+                          });
+                          ss(() {});
+                        }
+                      } catch (_) {
+                        if (mounted) showMessage(context, 'تعذر اختيار الصورة');
+                      }
+                    },
+                  ),
+                  if (path.isNotEmpty)
+                    IconButton(
+                      tooltip: 'إزالة',
+                      icon: const Icon(Icons.delete_outline),
+                      onPressed: () {
+                        setState(() {
+                          set('');
+                          _dirty = true;
+                        });
+                        ss(() {});
+                      },
+                    ),
+                ],
+              ),
+            );
+          }
+
+          return SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Padding(
+                  padding: EdgeInsets.all(12),
+                  child: Text('الغلافان يظهران في ملف PDF: الأول قبل الصفحات والثاني بعدها، بمقاس A4 كامل.'),
+                ),
+                coverRow('غلاف الملف (البداية)', _coverFront, (v) => _coverFront = v),
+                coverRow('الغلاف الخلفي (النهاية)', _coverBack, (v) => _coverBack = v),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _chip(IconData icon, String label, {bool? selected, required VoidCallback onTap}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 3),
+      child: selected == null
+          ? ActionChip(avatar: Icon(icon, size: 18), label: Text(label), onPressed: onTap)
+          : ChoiceChip(
+              avatar: Icon(icon, size: 18),
+              label: Text(label),
+              selected: selected,
+              onSelected: (_) => onTap(),
+            ),
+    );
+  }
+
+  Widget _formatBar() {
+    final ctrl = _pages[_active];
+    return Container(
+      color: const Color(0xff1b1d2b),
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            height: 40,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              children: [
+                _chip(Icons.format_color_text, 'لون النص', selected: _fgMode, onTap: () => setState(() => _fgMode = true)),
+                _chip(Icons.border_color, 'تظليل', selected: !_fgMode, onTap: () => setState(() => _fgMode = false)),
+                _chip(Icons.table_chart, 'جدول', onTap: _addTable),
+                _chip(Icons.image, 'صورة', onTap: _addImage),
+                _chip(Icons.crop_square, 'بطاقة', onTap: _addCard),
+                _chip(Icons.emoji_symbols, 'رموز', onTap: _symbolsSheet),
+              ],
+            ),
+          ),
+          SizedBox(
+            height: 38,
+            child: ListenableBuilder(
+              listenable: ctrl,
+              builder: (context, _) {
+                final cur = _fgMode ? ctrl.curFg : ctrl.curBg;
+                return ListView(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.all(4),
+                      child: InkWell(
+                        onTap: () async {
+                          final c = await _pickFromAll(context);
+                          if (c != null) _applyColor(c);
+                        },
+                        child: const CircleAvatar(
+                          radius: 14,
+                          backgroundColor: Colors.deepPurple,
+                          child: Icon(Icons.add, size: 16, color: Colors.white),
+                        ),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.all(4),
+                      child: InkWell(
+                        onTap: () => _applyColor(const Color(0x00000000)),
+                        child: CircleAvatar(
+                          radius: 14,
+                          backgroundColor: Colors.white24,
+                          child: Icon(cur == 0 ? Icons.check : Icons.block, size: 16),
+                        ),
+                      ),
+                    ),
+                    for (final c in _inkPalette)
+                      Padding(
+                        padding: const EdgeInsets.all(4),
+                        child: InkWell(
+                          onTap: () => _applyColor(c),
+                          child: CircleAvatar(
+                            radius: 14,
+                            backgroundColor: c,
+                            child: cur == c.toARGB32()
+                                ? Icon(
+                                    Icons.check,
+                                    size: 16,
+                                    color: c.computeLuminance() > .5 ? Colors.black : Colors.white,
+                                  )
+                                : null,
+                          ),
+                        ),
+                      ),
+                  ],
+                );
+              },
+            ),
+          ),
+          if (_favSymbols.isNotEmpty)
+            SizedBox(
+              height: 40,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                children: [
+                  for (final sym in _favSymbols)
+                    Padding(
+                      padding: const EdgeInsets.all(2),
+                      child: GestureDetector(
+                        onTap: () => _insertText(sym),
+                        onLongPress: () => _toggleFav(sym),
+                        child: Container(
+                          width: 38,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: Colors.white10,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(sym, style: const TextStyle(fontSize: 22)),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   // ---------------------------------------------------------------- build
 
   @override
@@ -530,10 +1261,12 @@ class _EditorScreenState extends State<EditorScreen> {
               onSelected: (v) {
                 if (v == 'info') _editLessonInfo();
                 if (v == 'wm') _watermarkSheet();
+                if (v == 'covers') _coversSheet();
                 if (v == 'pdf') _exportPdf();
               },
               itemBuilder: (_) => const [
                 PopupMenuItem(value: 'wm', child: Text('العلامة المائية (حجم، ظهور، لون)')),
+                PopupMenuItem(value: 'covers', child: Text('صور الغلاف (أمامي / خلفي)')),
                 PopupMenuItem(value: 'info', child: Text('بيانات الدرس (فيديو، ملاحظة...)')),
                 PopupMenuItem(value: 'pdf', child: Text('تصدير PDF')),
               ],
@@ -580,6 +1313,7 @@ class _EditorScreenState extends State<EditorScreen> {
               ),
             ),
             Expanded(child: _buildSheets()),
+            _formatBar(),
             if (!keyboardOpen) _buildControls(),
           ],
         ),
@@ -694,7 +1428,7 @@ class _EditorScreenState extends State<EditorScreen> {
                     opacity: _lineOpacity,
                     lineHeight: _fontPt * _lineFactor * scale,
                     textTop: pad + titleH,
-                    baseline: firstBaseline(_fontPt, scale),
+                    baseline: firstBaseline(_fontPt, scale, _lineFactor),
                     gap: _fontPt * .18 * scale,
                     bottomInset: pad + footerH,
                   ),
@@ -759,6 +1493,7 @@ class _EditorScreenState extends State<EditorScreen> {
               ),
             ),
           ),
+          for (final o in _objects[i]) _objectBox(i, o, scale),
           Positioned(
             left: pad,
             right: pad,
@@ -859,31 +1594,22 @@ class _EditorScreenState extends State<EditorScreen> {
                 const SizedBox(width: 28),
               ],
             ),
-            SizedBox(
-              height: 40,
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                children: [
-                  for (final c in _inkPalette)
-                    Padding(
-                      padding: const EdgeInsets.all(4),
-                      child: InkWell(
-                        onTap: () => setState(() => _inkColor = c),
-                        child: CircleAvatar(
-                          backgroundColor: c,
-                          radius: 15,
-                          child: _inkColor == c
-                              ? Icon(
-                                  Icons.check,
-                                  size: 16,
-                                  color: c.computeLuminance() > .5 ? Colors.black : Colors.white,
-                                )
-                              : null,
-                        ),
-                      ),
-                    ),
-                ],
-              ),
+            Row(
+              children: [
+                const Text('تباعد السطور'),
+                Expanded(
+                  child: Slider(
+                    value: _lineFactor,
+                    min: 1.3,
+                    max: 2.6,
+                    onChanged: (v) => setState(() => _lineFactor = v),
+                    onChangeEnd: (_) {
+                      if (_reflowAll()) setState(() => _dirty = true);
+                    },
+                  ),
+                ),
+                const SizedBox(width: 28),
+              ],
             ),
           ],
         ),
