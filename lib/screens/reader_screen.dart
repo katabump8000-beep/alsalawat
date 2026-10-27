@@ -79,7 +79,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     try {
       await exportLessonPdf(widget.lesson);
     } catch (e) {
-      if (mounted) showMessage(context, 'تعذر إنشاء ملف PDF');
+      if (mounted) showMessage(context, 'تعذر إنشاء PDF: $e');
     }
   }
 
