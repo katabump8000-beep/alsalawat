@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models.dart';
 import '../services/pdf_export.dart';
+import '../services/sound.dart';
 import '../utils.dart';
 
 /// توحيد النص قبل المقارنة: الهمزات، الياء، التشكيل، المسافات.
@@ -57,6 +58,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   }
 
   void _goTo(int page) {
+    Sound.tap();
     setState(() {
       _page = page;
       _resetQuiz();
@@ -64,6 +66,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   }
 
   void _toggleQuiz() {
+    Sound.tap();
     setState(() {
       _quiz = !_quiz;
       _resetQuiz();
@@ -83,7 +86,22 @@ class _ReaderScreenState extends State<ReaderScreen> {
     }
   }
 
+  void _check() {
+    final m = _matches;
+    var ok = 0;
+    for (var i = 0; i < m.length && i < _inputs.length; i++) {
+      if (_normalize(_inputs[i].text) == _normalize(m[i].group(1) ?? '')) ok++;
+    }
+    setState(() => _checked = true);
+    if (m.isNotEmpty && ok == m.length) {
+      Sound.success();
+    } else {
+      Sound.tap();
+    }
+  }
+
   void _changeSize(double delta) {
+    Sound.tap();
     setState(() => _size = (_size + delta).clamp(12.0, 36.0).toDouble());
   }
 
@@ -100,6 +118,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
               onPressed: _openVideo,
               icon: const Icon(Icons.play_circle_outline),
             ),
+          IconButton(
+            tooltip: 'الصوت',
+            onPressed: () => setState(() => Sound.enabled = !Sound.enabled),
+            icon: Icon(Sound.enabled ? Icons.volume_up : Icons.volume_off),
+          ),
           IconButton(
             tooltip: 'تصغير الخط',
             onPressed: () => _changeSize(-1),
@@ -129,9 +152,49 @@ class _ReaderScreenState extends State<ReaderScreen> {
                   color: paperColor,
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: Column(
+                child: Stack(
+                  children: [
+                    if (lesson.watermark.trim().isNotEmpty)
+                      Positioned.fill(
+                        child: IgnorePointer(
+                          child: Center(
+                            child: Transform.rotate(
+                              angle: -0.5,
+                              child: Text(
+                                lesson.watermark,
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: lesson.wmSize * 1.4,
+                                  fontWeight: FontWeight.bold,
+                                  color: Color(lesson.wmColor)
+                                      .withValues(alpha: lesson.wmOpacity),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    if (_page == 0 && lesson.titleBg != 0)
+                      Container(
+                        margin: const EdgeInsets.only(bottom: 14),
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: Color(lesson.titleBg),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          lesson.title,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: Color(lesson.titleColor),
+                            fontSize: 22,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
                     _quiz ? _buildQuiz() : _buildPlain(),
                     if (lesson.footerNote.trim().isNotEmpty)
                       Padding(
@@ -146,6 +209,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
                           ),
                         ),
                       ),
+                  ],
+                ),
                   ],
                 ),
               ),
@@ -207,17 +272,23 @@ class _ReaderScreenState extends State<ReaderScreen> {
           runSpacing: 8,
           children: [
             FilledButton.icon(
-              onPressed: _revealed ? null : () => setState(() => _checked = true),
+              onPressed: _revealed ? null : _check,
               icon: const Icon(Icons.check),
               label: const Text('تحقق من الحل'),
             ),
             OutlinedButton.icon(
-              onPressed: () => setState(() => _revealed = !_revealed),
+              onPressed: () {
+                Sound.tap();
+                setState(() => _revealed = !_revealed);
+              },
               icon: const Icon(Icons.lightbulb_outline),
               label: Text(_revealed ? 'إخفاء الحلول' : 'إظهار الحلول'),
             ),
             TextButton.icon(
-              onPressed: () => setState(_resetQuiz),
+              onPressed: () {
+                Sound.tap();
+                setState(_resetQuiz);
+              },
               icon: const Icon(Icons.refresh),
               label: const Text('إعادة'),
             ),

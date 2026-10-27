@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../constants.dart';
 import '../models.dart';
 import '../services/pdf_export.dart';
+import '../services/sound.dart';
 import '../utils.dart';
 
 /// أبعاد صفحة A4 بالنقاط (نفس أبعاد PDF) ليتطابق المحرر مع الملف الناتج.
@@ -15,6 +16,9 @@ const double _titleBlock = 46;
 const double _footerBlock = 28;
 const double _lineFactor = 1.8;
 const String _fontFamily = 'NotoSansArabic';
+
+/// يُنزل الخط عن أسفل صندوق السطر ليلامس أسفل الحروف تماماً (عدّله بين 0.10 و 0.30 إن لزم).
+const double _lineDrop = 0.22;
 
 const List<Color> _inkPalette = [
   paperInk,
@@ -64,6 +68,11 @@ class _EditorScreenState extends State<EditorScreen> {
   double _fontPt = 13;
   double _lineOpacity = .12;
   Color _inkColor = paperInk;
+  late double _wmSize = widget.lesson.wmSize;
+  late double _wmOpacity = widget.lesson.wmOpacity;
+  late Color _wmColor = Color(widget.lesson.wmColor);
+  late Color _titleColor = Color(widget.lesson.titleColor);
+  late Color _titleBg = Color(widget.lesson.titleBg);
   bool _dirty = false;
   bool _reflowing = false;
 
@@ -115,6 +124,7 @@ class _EditorScreenState extends State<EditorScreen> {
   }
 
   void _addPage() {
+    Sound.tap();
     setState(() {
       _addPageObjects('');
       _active = _pages.length - 1;
@@ -159,6 +169,14 @@ class _EditorScreenState extends State<EditorScreen> {
         height: _lineFactor,
       );
 
+  /// يفرض ارتفاعاً ثابتاً لكل سطر فتبقى الأسطر على الخطوط مهما اختلف الحرف.
+  StrutStyle _strut(double scale) => StrutStyle(
+        fontFamily: _fontFamily,
+        fontSize: _fontPt * scale,
+        height: _lineFactor,
+        forceStrutHeight: true,
+      );
+
   /// الارتفاع المتاح للنص في الصفحة [index] بمقياس [scale].
   double _availableHeight(int index, double scale) {
     final sheetH = _a4Width * scale * _a4Ratio;
@@ -173,6 +191,12 @@ class _EditorScreenState extends State<EditorScreen> {
       text: TextSpan(text: text, style: style),
       textDirection: TextDirection.rtl,
       textAlign: TextAlign.right,
+      strutStyle: StrutStyle(
+        fontFamily: _fontFamily,
+        fontSize: style.fontSize,
+        height: _lineFactor,
+        forceStrutHeight: true,
+      ),
     )..layout(maxWidth: maxWidth);
     try {
       if (tp.height <= maxHeight + 0.5) return null;
@@ -284,11 +308,19 @@ class _EditorScreenState extends State<EditorScreen> {
     l.watermark = _watermark.text;
     l.footerNote = _footer.text;
     l.videoUrl = _video.text.trim();
+    l.wmSize = _wmSize;
+    l.wmOpacity = _wmOpacity;
+    l.wmColor = _wmColor.toARGB32();
+    l.titleColor = _titleColor.toARGB32();
+    l.titleBg = _titleBg.toARGB32();
     l.pages = _pages.map((p) => p.text).toList();
     await widget.onSave();
     if (!mounted) return;
     setState(() => _dirty = false);
-    if (!silent) showMessage(context, 'تم حفظ الدرس');
+    if (!silent) {
+      Sound.success();
+      showMessage(context, 'تم حفظ الدرس');
+    }
   }
 
   Future<void> _exportPdf() async {
@@ -307,6 +339,7 @@ class _EditorScreenState extends State<EditorScreen> {
       showMessage(context, 'حدد كلمة أو عبارة أولاً');
       return;
     }
+    Sound.tap();
     final selected = c.text.substring(s.start, s.end);
     c.value = TextEditingValue(
       text: c.text.replaceRange(s.start, s.end, '$answerOpen$selected$answerClose'),
@@ -337,6 +370,89 @@ class _EditorScreenState extends State<EditorScreen> {
     }
   }
 
+  Future<Color?> _pickColor() => showModalBottomSheet<Color>(
+        context: context,
+        builder: (ctx) => Padding(
+          padding: const EdgeInsets.all(16),
+          child: Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              for (final c in _inkPalette)
+                InkWell(
+                  onTap: () => Navigator.pop(ctx, c),
+                  child: CircleAvatar(radius: 18, backgroundColor: c),
+                ),
+              InkWell(
+                onTap: () => Navigator.pop(ctx, const Color(0x00000000)),
+                child: const CircleAvatar(
+                  radius: 18,
+                  backgroundColor: Colors.white24,
+                  child: Icon(Icons.block, size: 18),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+
+  Future<void> _watermarkSheet() {
+    return showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, ss) {
+          void u(VoidCallback f) {
+            setState(() {
+              f();
+              _dirty = true;
+            });
+            ss(() {});
+          }
+
+          return Padding(
+            padding: EdgeInsets.fromLTRB(16, 16, 16, 16 + MediaQuery.viewInsetsOf(ctx).bottom),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: _watermark,
+                    onChanged: (_) => u(() {}),
+                    decoration: const InputDecoration(labelText: 'نص العلامة المائية'),
+                  ),
+                  Row(children: [
+                    const SizedBox(width: 70, child: Text('الحجم')),
+                    Expanded(
+                      child: Slider(value: _wmSize, min: 12, max: 160, onChanged: (v) => u(() => _wmSize = v)),
+                    ),
+                  ]),
+                  Row(children: [
+                    const SizedBox(width: 70, child: Text('الظهور')),
+                    Expanded(
+                      child: Slider(value: _wmOpacity, min: 0, max: 1, onChanged: (v) => u(() => _wmOpacity = v)),
+                    ),
+                  ]),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: FilledButton.tonalIcon(
+                      onPressed: () async {
+                        final c = await _pickColor();
+                        if (c != null) u(() => _wmColor = c);
+                      },
+                      icon: CircleAvatar(radius: 9, backgroundColor: _wmColor),
+                      label: const Text('لون العلامة'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
   Future<void> _editLessonInfo() {
     return showDialog<void>(
       context: context,
@@ -358,15 +474,6 @@ class _EditorScreenState extends State<EditorScreen> {
                 keyboardType: TextInputType.url,
                 textDirection: TextDirection.ltr,
                 decoration: const InputDecoration(labelText: 'رابط فيديو (اختياري)'),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _watermark,
-                onChanged: (_) => setState(() => _dirty = true),
-                decoration: const InputDecoration(
-                  labelText: 'العلامة المائية (تظهر في PDF)',
-                  hintText: 'مثال: ملخصاتي',
-                ),
               ),
             ],
           ),
@@ -420,10 +527,12 @@ class _EditorScreenState extends State<EditorScreen> {
             PopupMenuButton<String>(
               onSelected: (v) {
                 if (v == 'info') _editLessonInfo();
+                if (v == 'wm') _watermarkSheet();
                 if (v == 'pdf') _exportPdf();
               },
               itemBuilder: (_) => const [
-                PopupMenuItem(value: 'info', child: Text('بيانات الدرس (فيديو، علامة مائية...)')),
+                PopupMenuItem(value: 'wm', child: Text('العلامة المائية (حجم، ظهور، لون)')),
+                PopupMenuItem(value: 'info', child: Text('بيانات الدرس (فيديو، ملاحظة...)')),
                 PopupMenuItem(value: 'pdf', child: Text('تصدير PDF')),
               ],
             ),
@@ -433,16 +542,39 @@ class _EditorScreenState extends State<EditorScreen> {
           children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-              child: TextField(
-                controller: _title,
-                onChanged: (_) => setState(() => _dirty = true),
-                decoration: const InputDecoration(
-                  labelText: 'اسم الدرس',
-                  border: OutlineInputBorder(),
-                  isDense: true,
-                  filled: true,
-                  fillColor: Color(0xff1b1d2b),
-                ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _title,
+                      onChanged: (_) => setState(() => _dirty = true),
+                      decoration: const InputDecoration(
+                        labelText: 'اسم الدرس',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                        filled: true,
+                        fillColor: Color(0xff1b1d2b),
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'لون العنوان',
+                    icon: Icon(Icons.format_color_text, color: _titleColor),
+                    onPressed: () async {
+                      final c = await _pickColor();
+                      if (c != null) setState(() { _titleColor = c; _dirty = true; });
+                    },
+                  ),
+                  IconButton(
+                    tooltip: 'خلفية العنوان',
+                    icon: Icon(Icons.format_color_fill,
+                        color: _titleBg.a == 0 ? Colors.white54 : _titleBg),
+                    onPressed: () async {
+                      final c = await _pickColor();
+                      if (c != null) setState(() { _titleBg = c; _dirty = true; });
+                    },
+                  ),
+                ],
               ),
             ),
             Expanded(child: _buildSheets()),
@@ -537,17 +669,15 @@ class _EditorScreenState extends State<EditorScreen> {
             Positioned.fill(
               child: IgnorePointer(
                 child: Center(
-                  child: Opacity(
-                    opacity: .08,
-                    child: Transform.rotate(
-                      angle: -0.5,
-                      child: Text(
-                        watermark,
-                        style: TextStyle(
-                          fontFamily: _fontFamily,
-                          fontSize: 38 * scale,
-                          color: Colors.grey,
-                        ),
+                  child: Transform.rotate(
+                    angle: -0.5,
+                    child: Text(
+                      watermark,
+                      style: TextStyle(
+                        fontFamily: _fontFamily,
+                        fontSize: _wmSize * scale,
+                        fontWeight: FontWeight.bold,
+                        color: _wmColor.withValues(alpha: _wmOpacity),
                       ),
                     ),
                   ),
@@ -563,6 +693,7 @@ class _EditorScreenState extends State<EditorScreen> {
                     lineHeight: _fontPt * _lineFactor * scale,
                     topInset: pad + titleH,
                     bottomInset: pad + footerH,
+                    drop: _lineDrop,
                   ),
                 ),
               ),
@@ -573,7 +704,12 @@ class _EditorScreenState extends State<EditorScreen> {
               left: pad,
               right: pad,
               height: titleH,
-              child: Center(
+              child: Container(
+                decoration: BoxDecoration(
+                  color: _titleBg,
+                  borderRadius: BorderRadius.circular(6 * scale),
+                ),
+                alignment: Alignment.center,
                 child: Text(
                   _title.text,
                   maxLines: 1,
@@ -582,7 +718,7 @@ class _EditorScreenState extends State<EditorScreen> {
                   style: TextStyle(
                     fontFamily: _fontFamily,
                     fontSize: 20 * scale,
-                    color: paperInk,
+                    color: _titleColor,
                   ),
                 ),
               ),
@@ -605,6 +741,7 @@ class _EditorScreenState extends State<EditorScreen> {
               textDirection: TextDirection.rtl,
               textAlign: TextAlign.right,
               style: style,
+              strutStyle: _strut(scale),
               decoration: InputDecoration(
                 isCollapsed: true,
                 border: InputBorder.none,
@@ -758,12 +895,14 @@ class LinesPainter extends CustomPainter {
     required this.lineHeight,
     required this.topInset,
     required this.bottomInset,
+    this.drop = 0,
   });
 
   final double opacity;
   final double lineHeight;
   final double topInset;
   final double bottomInset;
+  final double drop;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -772,7 +911,8 @@ class LinesPainter extends CustomPainter {
       ..strokeWidth = .8;
     final limit = size.height - bottomInset + 0.5;
     for (double y = topInset + lineHeight; y <= limit; y += lineHeight) {
-      canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
+      final yy = y - lineHeight * drop;
+      canvas.drawLine(Offset(0, yy), Offset(size.width, yy), paint);
     }
   }
 
@@ -781,5 +921,6 @@ class LinesPainter extends CustomPainter {
       old.opacity != opacity ||
       old.lineHeight != lineHeight ||
       old.topInset != topInset ||
-      old.bottomInset != bottomInset;
+      old.bottomInset != bottomInset ||
+      old.drop != drop;
 }
