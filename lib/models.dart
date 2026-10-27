@@ -24,6 +24,9 @@ class Lesson {
     this.wmColor = 0xff9e9e9e,
     this.titleColor = 0xff1f2430,
     this.titleBg = 0,
+    this.fontPt = 13,
+    this.inkColor = 0xff1f2430,
+    this.lineOpacity = .2,
   })  : id = id ?? _uuid.v4(),
         pages = (pages == null || pages.isEmpty) ? [''] : pages;
 
@@ -39,6 +42,9 @@ class Lesson {
   int wmColor;
   int titleColor;
   int titleBg; // 0 = بدون خلفية
+  double fontPt;
+  int inkColor;
+  double lineOpacity;
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -53,6 +59,9 @@ class Lesson {
         'wmColor': wmColor,
         'titleColor': titleColor,
         'titleBg': titleBg,
+        'fontPt': fontPt,
+        'inkColor': inkColor,
+        'lineOpacity': lineOpacity,
       };
 
   factory Lesson.fromJson(Map<String, dynamic> j) => Lesson(
@@ -68,5 +77,8 @@ class Lesson {
         wmColor: (j['wmColor'] as num?)?.toInt() ?? 0xff9e9e9e,
         titleColor: (j['titleColor'] as num?)?.toInt() ?? 0xff1f2430,
         titleBg: (j['titleBg'] as num?)?.toInt() ?? 0,
+        fontPt: (j['fontPt'] as num?)?.toDouble() ?? 13,
+        inkColor: (j['inkColor'] as num?)?.toInt() ?? 0xff1f2430,
+        lineOpacity: (j['lineOpacity'] as num?)?.toDouble() ?? .2,
       );
 }
