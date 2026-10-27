@@ -19,6 +19,11 @@ class Lesson {
     this.watermark = '',
     this.footerNote = '',
     this.videoUrl = '',
+    this.wmSize = 38,
+    this.wmOpacity = .08,
+    this.wmColor = 0xff9e9e9e,
+    this.titleColor = 0xff1f2430,
+    this.titleBg = 0,
   })  : id = id ?? _uuid.v4(),
         pages = (pages == null || pages.isEmpty) ? [''] : pages;
 
@@ -29,6 +34,11 @@ class Lesson {
   String watermark;
   String footerNote;
   String videoUrl;
+  double wmSize;
+  double wmOpacity;
+  int wmColor;
+  int titleColor;
+  int titleBg; // 0 = بدون خلفية
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -38,6 +48,11 @@ class Lesson {
         'watermark': watermark,
         'footerNote': footerNote,
         'videoUrl': videoUrl,
+        'wmSize': wmSize,
+        'wmOpacity': wmOpacity,
+        'wmColor': wmColor,
+        'titleColor': titleColor,
+        'titleBg': titleBg,
       };
 
   factory Lesson.fromJson(Map<String, dynamic> j) => Lesson(
@@ -48,5 +63,10 @@ class Lesson {
         watermark: (j['watermark'] as String?) ?? '',
         footerNote: (j['footerNote'] as String?) ?? '',
         videoUrl: (j['videoUrl'] as String?) ?? '',
+        wmSize: (j['wmSize'] as num?)?.toDouble() ?? 38,
+        wmOpacity: (j['wmOpacity'] as num?)?.toDouble() ?? .08,
+        wmColor: (j['wmColor'] as num?)?.toInt() ?? 0xff9e9e9e,
+        titleColor: (j['titleColor'] as num?)?.toInt() ?? 0xff1f2430,
+        titleBg: (j['titleBg'] as num?)?.toInt() ?? 0,
       );
 }
