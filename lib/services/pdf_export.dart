@@ -5,6 +5,8 @@ import 'package:printing/printing.dart';
 
 import '../models.dart';
 
+PdfColor _pdfColor(int argb) => PdfColor.fromInt(argb & 0xffffff | 0xff000000);
+
 /// يصدّر الدرس إلى PDF بصفحات A4 مطابقة لصفحات المحرر.
 /// كل صفحة في المحرر = صفحة جديدة في PDF، والنص الزائد ينتقل تلقائياً.
 Future<void> exportLessonPdf(Lesson lesson, {double fontSize = 13}) async {
@@ -18,11 +20,21 @@ Future<void> exportLessonPdf(Lesson lesson, {double fontSize = 13}) async {
   );
 
   final body = <pw.Widget>[
-    pw.Text(
-      lesson.title,
-      textDirection: pw.TextDirection.rtl,
-      textAlign: pw.TextAlign.center,
-      style: pw.TextStyle(fontSize: 20),
+    pw.Container(
+      width: double.infinity,
+      padding: const pw.EdgeInsets.symmetric(vertical: 8, horizontal: 10),
+      decoration: (lesson.titleBg >> 24) == 0
+          ? null
+          : pw.BoxDecoration(
+              color: _pdfColor(lesson.titleBg),
+              borderRadius: pw.BorderRadius.circular(6),
+            ),
+      child: pw.Text(
+        lesson.title,
+        textDirection: pw.TextDirection.rtl,
+        textAlign: pw.TextAlign.center,
+        style: pw.TextStyle(fontSize: 20, color: _pdfColor(lesson.titleColor)),
+      ),
     ),
     pw.SizedBox(height: 24),
   ];
@@ -53,13 +65,16 @@ Future<void> exportLessonPdf(Lesson lesson, {double fontSize = 13}) async {
             ? pw.SizedBox()
             : pw.Center(
                 child: pw.Opacity(
-                  opacity: .08,
+                  opacity: lesson.wmOpacity.clamp(0.0, 1.0).toDouble(),
                   child: pw.Transform.rotate(
                     angle: -0.5,
                     child: pw.Text(
                       watermark,
                       textDirection: pw.TextDirection.rtl,
-                      style: pw.TextStyle(fontSize: 38, color: PdfColors.grey),
+                      style: pw.TextStyle(
+                        fontSize: lesson.wmSize,
+                        color: _pdfColor(lesson.wmColor),
+                      ),
                     ),
                   ),
                 ),
