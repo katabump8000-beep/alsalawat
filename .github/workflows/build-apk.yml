@@ -1,30 +1,81 @@
 name: Build Flutter APK
+
 on:
   workflow_dispatch:
   push:
-    branches: [ main, master ]
+    branches: [main, master]
+
 permissions:
   contents: read
+
+concurrency:
+  group: build-apk-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: dafatri_flutter
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+
+      # يعمل سواء كان المشروع في جذر المستودع أو داخل مجلد فرعي
+      - name: Locate Flutter project
+        run: |
+          PUBSPEC=$(find . -maxdepth 3 -name pubspec.yaml -not -path '*/.*' | head -n 1)
+          if [ -z "$PUBSPEC" ]; then
+            echo "::error::pubspec.yaml not found in the repository"
+            exit 1
+          fi
+          APP_DIR=$(dirname "$PUBSPEC")
+          echo "APP_DIR=$APP_DIR" >> "$GITHUB_ENV"
+          echo "Flutter project folder: $APP_DIR"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
-      # The source archive does not contain Android Gradle scaffolding. Generate it first.
+          cache: true
+
       - name: Generate Android platform files
-        run: flutter create --platforms=android --project-name dafatri_flutter .
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          flutter create --platforms=android --org com.bakloria --project-name dafatri .
+          rm -rf test
+
+      - name: Patch Android manifest (app name + link queries)
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          python3 - <<'PY'
+          import re, pathlib
+          p = pathlib.Path('android/app/src/main/AndroidManifest.xml')
+          s = p.read_text(encoding='utf-8')
+          s = re.sub(r'android:label="[^"]*"', 'android:label="بكلوريا أدبي"', s, count=1)
+          if '<queries>' not in s:
+              s = s.replace('<application', '<queries><intent><action android:name="android.intent.action.VIEW"/><data android:scheme="https"/></intent></queries>\n    <application', 1)
+          p.write_text(s, encoding='utf-8')
+          print(s)
+          PY
+
       - name: Install dependencies
+        working-directory: ${{ env.APP_DIR }}
         run: flutter pub get
+
+      - name: Analyze (does not block the build)
+        working-directory: ${{ env.APP_DIR }}
+        continue-on-error: true
+        run: flutter analyze
+
       - name: Build release APK
+        working-directory: ${{ env.APP_DIR }}
         run: flutter build apk --release
+
       - uses: actions/upload-artifact@v4
         with:
-          name: bakloria-adabi-android-apk
-          path: dafatri_flutter/build/app/outputs/flutter-apk/app-release.apk
+          name: bakloria-adabi-apk
+          path: ${{ env.APP_DIR }}/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
