@@ -10,6 +10,80 @@ final RegExp answerPattern = RegExp('$answerOpen(.*?)$answerClose', dotAll: true
 String stripAnswerMarkers(String s) =>
     s.replaceAll(answerOpen, '').replaceAll(answerClose, '');
 
+/// عنصر عائم على الصفحة: صورة أو بطاقة أو جدول. الإحداثيات بنقاط A4 (595×842).
+class PageObject {
+  PageObject({
+    String? id,
+    required this.type, // image | card | table
+    this.x = 80,
+    this.y = 160,
+    this.w = 220,
+    this.h = 120,
+    this.text = '',
+    this.fill = 0xffffffff,
+    this.textColor = 0xff1f2430,
+    this.shape = 'rounded', // rect | rounded | circle
+    this.rows = 3,
+    this.cols = 3,
+    List<String>? cells,
+    this.path = '',
+    this.header = 0xffc5cae9,
+  })  : id = id ?? _uuid.v4(),
+        cells = cells ?? [];
+
+  final String id;
+  String type;
+  double x, y, w, h;
+  String text;
+  int fill, textColor;
+  String shape;
+  int rows, cols;
+  List<String> cells;
+  String path;
+  int header;
+
+  String cell(int r, int c) {
+    final i = r * cols + c;
+    return i >= 0 && i < cells.length ? cells[i] : '';
+  }
+
+  void resize(int newRows, int newCols) {
+    final out = <String>[];
+    for (var r = 0; r < newRows; r++) {
+      for (var c = 0; c < newCols; c++) {
+        out.add(r < rows && c < cols ? cell(r, c) : '');
+      }
+    }
+    rows = newRows;
+    cols = newCols;
+    cells = out;
+  }
+
+  Map<String, dynamic> toJson() => {
+        'id': id, 'type': type, 'x': x, 'y': y, 'w': w, 'h': h, 'text': text,
+        'fill': fill, 'textColor': textColor, 'shape': shape, 'rows': rows,
+        'cols': cols, 'cells': cells, 'path': path, 'header': header,
+      };
+
+  factory PageObject.fromJson(Map<String, dynamic> j) => PageObject(
+        id: j['id'] as String?,
+        type: (j['type'] as String?) ?? 'card',
+        x: (j['x'] as num?)?.toDouble() ?? 80,
+        y: (j['y'] as num?)?.toDouble() ?? 160,
+        w: (j['w'] as num?)?.toDouble() ?? 220,
+        h: (j['h'] as num?)?.toDouble() ?? 120,
+        text: (j['text'] as String?) ?? '',
+        fill: (j['fill'] as num?)?.toInt() ?? 0xffffffff,
+        textColor: (j['textColor'] as num?)?.toInt() ?? 0xff1f2430,
+        shape: (j['shape'] as String?) ?? 'rounded',
+        rows: (j['rows'] as num?)?.toInt() ?? 3,
+        cols: (j['cols'] as num?)?.toInt() ?? 3,
+        cells: (j['cells'] as List?)?.map((e) => e.toString()).toList(),
+        path: (j['path'] as String?) ?? '',
+        header: (j['header'] as num?)?.toInt() ?? 0xffc5cae9,
+      );
+}
+
 class Lesson {
   Lesson({
     String? id,
@@ -27,8 +101,29 @@ class Lesson {
     this.fontPt = 13,
     this.inkColor = 0xff1f2430,
     this.lineOpacity = .2,
+    this.lineFactor = 1.8,
+    this.coverFront = '',
+    this.coverBack = '',
+    List<List<int>>? runs,
+    List<List<PageObject>>? objects,
   })  : id = id ?? _uuid.v4(),
-        pages = (pages == null || pages.isEmpty) ? [''] : pages;
+        pages = (pages == null || pages.isEmpty) ? [''] : pages,
+        pageRuns = runs ?? [],
+        pageObjects = objects ?? [] {
+    sync();
+  }
+
+  /// يُبقي قوائم التنسيق والعناصر بنفس عدد الصفحات.
+  void sync() {
+    while (pageRuns.length < pages.length) {
+      pageRuns.add(<int>[]);
+    }
+    if (pageRuns.length > pages.length) pageRuns.removeRange(pages.length, pageRuns.length);
+    while (pageObjects.length < pages.length) {
+      pageObjects.add(<PageObject>[]);
+    }
+    if (pageObjects.length > pages.length) pageObjects.removeRange(pages.length, pageObjects.length);
+  }
 
   final String id;
   String title;
@@ -45,6 +140,11 @@ class Lesson {
   double fontPt;
   int inkColor;
   double lineOpacity;
+  double lineFactor;
+  String coverFront;
+  String coverBack;
+  List<List<int>> pageRuns; // تلوين كل حرف: [بداية، نهاية، لون النص، لون التظليل]...
+  List<List<PageObject>> pageObjects;
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -62,6 +162,11 @@ class Lesson {
         'fontPt': fontPt,
         'inkColor': inkColor,
         'lineOpacity': lineOpacity,
+        'lineFactor': lineFactor,
+        'coverFront': coverFront,
+        'coverBack': coverBack,
+        'runs': pageRuns,
+        'objects': pageObjects.map((l) => l.map((o) => o.toJson()).toList()).toList(),
       };
 
   factory Lesson.fromJson(Map<String, dynamic> j) => Lesson(
@@ -80,5 +185,16 @@ class Lesson {
         fontPt: (j['fontPt'] as num?)?.toDouble() ?? 13,
         inkColor: (j['inkColor'] as num?)?.toInt() ?? 0xff1f2430,
         lineOpacity: (j['lineOpacity'] as num?)?.toDouble() ?? .2,
+        lineFactor: (j['lineFactor'] as num?)?.toDouble() ?? 1.8,
+        coverFront: (j['coverFront'] as String?) ?? '',
+        coverBack: (j['coverBack'] as String?) ?? '',
+        runs: (j['runs'] as List?)
+            ?.map((e) => (e as List).map((x) => (x as num).toInt()).toList())
+            .toList(),
+        objects: (j['objects'] as List?)
+            ?.map((l) => (l as List)
+                .map((o) => PageObject.fromJson(Map<String, dynamic>.from(o as Map)))
+                .toList())
+            .toList(),
       );
 }
