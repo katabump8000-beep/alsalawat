@@ -20,8 +20,8 @@ List<int> encodeRuns(List<int> fg, List<int> bg) {
 }
 
 ({List<int> fg, List<int> bg}) decodeRuns(int len, List<int> runs) {
-  final fg = List<int>.filled(len, 0);
-  final bg = List<int>.filled(len, 0);
+  final fg = List<int>.filled(len, 0, growable: true);
+  final bg = List<int>.filled(len, 0, growable: true);
   for (var k = 0; k + 3 < runs.length; k += 4) {
     final s = math.min(math.max(runs[k], 0), len);
     final e = math.min(math.max(runs[k + 1], 0), len);
