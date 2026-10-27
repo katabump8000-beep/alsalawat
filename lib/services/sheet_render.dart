@@ -103,7 +103,7 @@ TextPainter _tp(String text, TextStyle style, {int? maxLines}) => TextPainter(
     );
 
 /// يرسم صفحة [index] من الدرس بنفس مظهر المحرر ويرجعها PNG عالي الدقة.
-Future<Uint8List> renderSheetPng(Lesson l, int index, {double scale = 3}) async {
+Future<Uint8List> renderSheetPng(Lesson l, int index, {double scale = 4.2}) async {
   final w = kA4Width * scale;
   final h = w * kA4Ratio;
   final rec = ui.PictureRecorder();
