@@ -1,24 +1,23 @@
-name: alsesi
-description: ALSESI - Arabic grammar lessons
-publish_to: none
+name: dafatri
+description: Arabic lesson notes and self-test app
+publish_to: 'none'
 version: 1.0.0+1
 environment:
-  sdk: '>=3.0.0 <4.0.0'
+  sdk: '>=3.3.0 <4.0.0'
 dependencies:
   flutter:
     sdk: flutter
-  shared_preferences: ^2.2.0
-  audioplayers: ^6.0.0
-  pdf: ^3.10.0
-  printing: ^5.12.0
-dev_dependencies:
-  flutter_launcher_icons: ^0.13.1
+  shared_preferences: ^2.3.2
+  pdf: ^3.11.1
+  printing: ^5.13.4
+  image_picker: ^1.1.2
+  uuid: ^4.5.1
+  url_launcher: ^6.3.1
 flutter:
   uses-material-design: true
   assets:
-    - assets/click.mp3
-    - assets/saat.mp3
-flutter_launcher_icons:
-  android: true
-  ios: false
-  image_path: assets/icon.png
+    - assets/fonts/NotoSansArabic-Regular.ttf
+  fonts:
+    - family: NotoSansArabic
+      fonts:
+        - asset: assets/fonts/NotoSansArabic-Regular.ttf
