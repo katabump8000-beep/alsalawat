@@ -58,6 +58,16 @@ class AppStorage {
     );
   }
 
+  static Future<List<String>> loadStrings(String key) async {
+    final prefs = await SharedPreferences.getInstance();
+    return (prefs.getStringList(key) ?? <String>[]).toList();
+  }
+
+  static Future<void> saveStrings(String key, List<String> v) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(key, v);
+  }
+
   static Future<List<String>> loadFavSymbols() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getStringList('favSymbols') ?? ['★', '◆', '●', '☞', '→'];

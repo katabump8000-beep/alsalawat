@@ -26,7 +26,7 @@ StrutStyle sheetStrut(double fontPt, double scale, double lf) => StrutStyle(
       fontFamily: kFont,
       fontSize: fontPt * scale,
       height: lf,
-      forceStrutHeight: true,
+      forceStrutHeight: false,
     );
 
 /// بُعد خط الأساس الحقيقي للسطر الأول عن أعلى منطقة النص (يُقاس ولا يُقدَّر).
@@ -277,13 +277,19 @@ Future<Uint8List> renderSheetPng(Lesson l, int index, {double scale = 4.2}) asyn
     tp.dispose();
   }
 
+  // الصور والبطاقات والجداول (تحت النص ليُكتب فوقها)
+  for (final o in l.pageObjects[index]) {
+    await _drawObject(c, o, scale);
+  }
+
   // النص (مع لون كل حرف وتظليله)
   final raw = l.pages[index];
   final fmt = decodeRuns(raw.length, l.pageRuns[index]);
+  final sizes = decodeSizes(raw.length, l.pageSizes[index]);
   final body = TextPainter(
     text: TextSpan(
       style: sheetTextStyle(l.fontPt, scale, Color(l.inkColor), lf),
-      children: richSpans(raw, fmt.fg, fmt.bg, strip: true),
+      children: richSpans(raw, fmt.fg, fmt.bg, sz: sizes, sizeScale: scale, strip: true),
     ),
     textDirection: TextDirection.rtl,
     textAlign: TextAlign.right,
@@ -294,11 +300,6 @@ Future<Uint8List> renderSheetPng(Lesson l, int index, {double scale = 4.2}) asyn
   body.paint(c, Offset(pad, pad + titleH));
   c.restore();
   body.dispose();
-
-  // الصور والبطاقات والجداول
-  for (final o in l.pageObjects[index]) {
-    await _drawObject(c, o, scale);
-  }
 
   // التذييل ورقم الصفحة
   final pageNo = _tp('${index + 1}', TextStyle(fontFamily: kFont, fontSize: 10 * scale, color: Colors.black54))
