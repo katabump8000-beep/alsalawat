@@ -29,6 +29,11 @@ class PageObject {
     this.path = '',
     this.header = 0xffc5cae9,
     this.locked = false,
+    this.pinned = false,
+    this.sx = 12,
+    this.sy = 12,
+    this.sw = 0,
+    this.sh = 0,
   })  : id = id ?? _uuid.v4(),
         cells = cells ?? [];
 
@@ -43,6 +48,10 @@ class PageObject {
   String path;
   int header;
   bool locked;
+
+  /// مثبّت على الشاشة: يبقى ظاهراً بنفس المكان والحجم أثناء التمرير والتكبير (في المحرر فقط).
+  bool pinned;
+  double sx, sy, sw, sh; // موضع وحجم العنصر المثبّت بوحدات الشاشة
 
   PageObject copy() => PageObject(
         type: type, x: x + 18, y: y + 18, w: w, h: h, text: text, fill: fill,
@@ -72,6 +81,7 @@ class PageObject {
         'fill': fill, 'textColor': textColor, 'shape': shape, 'rows': rows,
         'cols': cols, 'cells': cells, 'path': path, 'header': header,
         'locked': locked,
+        'pinned': pinned, 'sx': sx, 'sy': sy, 'sw': sw, 'sh': sh,
       };
 
   factory PageObject.fromJson(Map<String, dynamic> j) => PageObject(
@@ -91,6 +101,11 @@ class PageObject {
         path: (j['path'] as String?) ?? '',
         header: (j['header'] as num?)?.toInt() ?? 0xffc5cae9,
         locked: (j['locked'] as bool?) ?? false,
+        pinned: (j['pinned'] as bool?) ?? false,
+        sx: (j['sx'] as num?)?.toDouble() ?? 12,
+        sy: (j['sy'] as num?)?.toDouble() ?? 12,
+        sw: (j['sw'] as num?)?.toDouble() ?? 0,
+        sh: (j['sh'] as num?)?.toDouble() ?? 0,
       );
 }
 
