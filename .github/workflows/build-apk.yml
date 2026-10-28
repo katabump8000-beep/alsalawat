@@ -61,6 +61,54 @@ jobs:
           print(s)
           PY
 
+      # يرفع compileSdk لكل الإضافات إلى 36 (حل خطأ checkReleaseAarMetadata في file_picker)
+      - name: Force compileSdk 36 for all plugins
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          python3 - <<'PY'
+          import pathlib
+          kts = pathlib.Path('android/build.gradle.kts')
+          groovy = pathlib.Path('android/build.gradle')
+          kts_block = """
+          
+          subprojects {
+              val fixSdk: (Project) -> Unit = { p ->
+                  val ext = p.extensions.findByName("android")
+                  if (ext != null) {
+                      val m = ext.javaClass.methods.firstOrNull { it.name == "setCompileSdk" && it.parameterCount == 1 }
+                      if (m != null) {
+                          m.invoke(ext, 36)
+                      } else {
+                          ext.javaClass.methods
+                              .firstOrNull { it.name == "compileSdkVersion" && it.parameterTypes.size == 1 && it.parameterTypes[0] == Int::class.javaPrimitiveType }
+                              ?.invoke(ext, 36)
+                      }
+                  }
+              }
+              if (state.executed) fixSdk(this) else afterEvaluate { fixSdk(this) }
+          }
+          """
+          groovy_block = """
+          
+          subprojects {
+              def fixSdk = { p ->
+                  if (p.hasProperty('android')) {
+                      p.android.compileSdkVersion 36
+                  }
+              }
+              if (project.state.executed) { fixSdk(project) } else { project.afterEvaluate { fixSdk(project) } }
+          }
+          """
+          if kts.exists():
+              kts.write_text(kts.read_text(encoding='utf-8') + kts_block, encoding='utf-8')
+              print('patched', kts)
+          elif groovy.exists():
+              groovy.write_text(groovy.read_text(encoding='utf-8') + groovy_block, encoding='utf-8')
+              print('patched', groovy)
+          else:
+              raise SystemExit('no android/build.gradle(.kts) found')
+          PY
+
       - name: Install dependencies
         working-directory: ${{ env.APP_DIR }}
         run: flutter pub get
