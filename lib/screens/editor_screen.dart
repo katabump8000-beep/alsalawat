@@ -632,6 +632,34 @@ class _EditorScreenState extends State<EditorScreen> {
     AppStorage.saveStrings('recentSymbols', _recentSymbols);
   }
 
+  /// إدخال حجم الخط يدوياً (من 1 إلى 680).
+  Future<void> _typeSize(double current) async {
+    final c = TextEditingController(text: current.round().toString());
+    final r = await showDialog<int>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('حجم الخط (1 – 680)'),
+        content: TextField(
+          controller: c,
+          autofocus: true,
+          keyboardType: TextInputType.number,
+          textDirection: TextDirection.ltr,
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, int.tryParse(c.text.trim())),
+            child: const Text('موافق'),
+          ),
+        ],
+      ),
+    );
+    Future.delayed(const Duration(milliseconds: 600), c.dispose);
+    if (r != null && mounted) {
+      setState(() => _pendSize = r.clamp(1, 680).toDouble());
+    }
+  }
+
   void _applySize(int v) {
     final ctrl = _pages[_active];
     final sel = ctrl.selection;
@@ -845,7 +873,7 @@ class _EditorScreenState extends State<EditorScreen> {
         ),
       ];
     }
-    final barLeft = math.max(0.0, o.x + o.w - 3 * (hs + 4));
+    final barLeft = math.max(0.0, o.x + o.w - 4 * (hs + 4));
     final barTop = o.y >= hs + 2 ? o.y - hs - 2 : o.y + 2;
     return [
       Positioned(
@@ -913,10 +941,100 @@ class _EditorScreenState extends State<EditorScreen> {
               }),
               child: _round(hs, Icons.lock_open, color: Colors.orange),
             ),
+            SizedBox(width: 4),
+            GestureDetector(onTap: () => _pinObject(o), child: _round(hs, Icons.push_pin, color: Colors.pink)),
           ],
         ),
       ),
     ];
+  }
+
+  /// تثبيت العنصر على الشاشة: يبقى بنفس المكان والحجم مهما مرّرت أو كبّرت.
+  void _pinObject(PageObject o) {
+    setState(() {
+      if (o.sw <= 0) {
+        final w = math.min(o.w, 220.0).toDouble();
+        o.sw = w;
+        o.sh = o.h * w / o.w;
+        o.sx = 12;
+        o.sy = 12;
+      }
+      o.pinned = true;
+      _dirty = true;
+    });
+  }
+
+  Widget _pinnedItem(int page, PageObject o, double vw, double vh) {
+    const hs = 30.0;
+    final w = o.sw.clamp(60.0, math.max(60.0, vw)).toDouble();
+    final h = o.sh.clamp(40.0, math.max(40.0, vh)).toDouble();
+    final x = o.sx.clamp(0.0, math.max(0.0, vw - w)).toDouble();
+    final y = o.sy.clamp(0.0, math.max(0.0, vh - h)).toDouble();
+    return Positioned(
+      key: ValueKey('pin-${o.id}'),
+      left: x,
+      top: y,
+      width: w,
+      height: h,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Positioned.fill(child: IgnorePointer(child: buildObjectWidget(o, w / o.w))),
+          Positioned.fill(
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(border: Border.all(color: Colors.pinkAccent, width: 1.5)),
+              ),
+            ),
+          ),
+          Positioned(
+            left: 0,
+            top: 0,
+            child: GestureDetector(
+              onPanUpdate: (d) => setState(() {
+                o.sx = (x + d.delta.dx).clamp(0.0, math.max(0.0, vw - w)).toDouble();
+                o.sy = (y + d.delta.dy).clamp(0.0, math.max(0.0, vh - h)).toDouble();
+                o.sw = w;
+                o.sh = h;
+                _dirty = true;
+              }),
+              child: _round(hs, Icons.open_with, color: Colors.pink),
+            ),
+          ),
+          Positioned(
+            right: 0,
+            bottom: 0,
+            child: GestureDetector(
+              onPanUpdate: (d) => setState(() {
+                o.sx = x;
+                o.sy = y;
+                o.sw = (w + d.delta.dx).clamp(60.0, math.max(60.0, vw - x)).toDouble();
+                o.sh = (h + d.delta.dy).clamp(40.0, math.max(40.0, vh - y)).toDouble();
+                _dirty = true;
+              }),
+              child: _round(hs, Icons.open_in_full, color: Colors.pink),
+            ),
+          ),
+          Positioned(
+            right: 0,
+            top: 0,
+            child: Row(
+              children: [
+                GestureDetector(onTap: () => _editObject(page, o), child: _round(hs, Icons.edit)),
+                const SizedBox(width: 4),
+                GestureDetector(
+                  onTap: () => setState(() {
+                    o.pinned = false;
+                    _dirty = true;
+                  }),
+                  child: _round(hs, Icons.push_pin_outlined, color: Colors.orange),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _colorBtn(String label, int value, void Function(int) set, StateSetter ss) {
@@ -1239,7 +1357,7 @@ class _EditorScreenState extends State<EditorScreen> {
         final base = has
             ? (ctrl.sz[sel.start] == 0 ? _fontPt : ctrl.sz[sel.start].toDouble())
             : (ctrl.curSz == 0 ? _fontPt : ctrl.curSz.toDouble());
-        final v = (_pendSize ?? base).clamp(6.0, 60.0).toDouble();
+        final v = (_pendSize ?? base).clamp(1.0, 680.0).toDouble();
         return Container(
           margin: const EdgeInsets.fromLTRB(8, 2, 8, 4),
           padding: const EdgeInsets.all(8),
@@ -1268,25 +1386,36 @@ class _EditorScreenState extends State<EditorScreen> {
                 children: [
                   IconButton(
                     visualDensity: VisualDensity.compact,
-                    onPressed: () => setState(() => _pendSize = math.max(6, v - 1)),
+                    onPressed: () => setState(() => _pendSize = math.max(1, v - 1)),
                     icon: const Icon(Icons.remove_circle_outline),
                   ),
                   Expanded(
                     child: Slider(
                       value: v,
-                      min: 6,
-                      max: 60,
-                      divisions: 54,
+                      min: 1,
+                      max: 680,
                       label: v.round().toString(),
                       onChanged: (x) => setState(() => _pendSize = x.roundToDouble()),
                     ),
                   ),
                   IconButton(
                     visualDensity: VisualDensity.compact,
-                    onPressed: () => setState(() => _pendSize = math.min(60, v + 1)),
+                    onPressed: () => setState(() => _pendSize = math.min(680, v + 1)),
                     icon: const Icon(Icons.add_circle_outline),
                   ),
-                  SizedBox(width: 26, child: Text(v.round().toString())),
+                  InkWell(
+                    onTap: () => _typeSize(v),
+                    child: Container(
+                      width: 46,
+                      padding: const EdgeInsets.symmetric(vertical: 6),
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.white24),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(v.round().toString()),
+                    ),
+                  ),
                 ],
               ),
               Row(
@@ -1351,488 +1480,4 @@ class _EditorScreenState extends State<EditorScreen> {
               listenable: ctrl,
               builder: (context, _) {
                 final cur = _fgMode ? ctrl.curFg : ctrl.curBg;
-                Widget dot(Color c, VoidCallback onTap, {Widget? child}) => Padding(
-                      padding: const EdgeInsets.all(4),
-                      child: InkWell(onTap: onTap, child: CircleAvatar(radius: 14, backgroundColor: c, child: child)),
-                    );
-                Widget check(Color c) => Icon(
-                      Icons.check,
-                      size: 16,
-                      color: c.computeLuminance() > .5 ? Colors.black : Colors.white,
-                    );
-                return ListView(
-                  scrollDirection: Axis.horizontal,
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  children: [
-                    dot(Colors.deepPurple, () async {
-                      final c = await _pickFromAll(context);
-                      if (c != null) _applyColor(c);
-                    }, child: const Icon(Icons.add, size: 16, color: Colors.white)),
-                    dot(Colors.white24, () => _applyColor(const Color(0x00000000)),
-                        child: Icon(cur == 0 ? Icons.check : Icons.block, size: 16)),
-                    for (final r in _recentColors)
-                      dot(Color(r), () => _applyColor(Color(r)), child: cur == r ? check(Color(r)) : null),
-                    if (_recentColors.isNotEmpty)
-                      const SizedBox(height: 28, child: VerticalDivider(width: 10, color: Colors.white24)),
-                    for (final c in _inkPalette)
-                      dot(c, () => _applyColor(c), child: cur == c.toARGB32() ? check(c) : null),
-                  ],
-                );
-              },
-            ),
-          ),
-          if (symbols.isNotEmpty)
-            SizedBox(
-              height: 40,
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                children: [
-                  for (final sym in symbols)
-                    Padding(
-                      padding: const EdgeInsets.all(2),
-                      child: GestureDetector(
-                        onTap: () => _insertText(sym),
-                        onLongPress: () => _toggleFav(sym),
-                        child: Container(
-                          width: 38,
-                          alignment: Alignment.center,
-                          decoration: BoxDecoration(
-                            color: _favSymbols.contains(sym) ? Colors.deepPurple.withValues(alpha: .4) : Colors.white10,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text(sym, style: const TextStyle(fontSize: 22)),
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-
-  // ---------------------------------------------------------------- build
-
-  @override
-  Widget build(BuildContext context) {
-    final keyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 0;
-
-    return PopScope(
-      canPop: !_dirty,
-      onPopInvokedWithResult: (didPop, _) {
-        if (!didPop) _confirmExit();
-      },
-      child: Scaffold(
-        backgroundColor: const Color(0xff2a2c3a),
-        appBar: AppBar(
-          title: const Text('محرر الدرس'),
-          actions: [
-            ListenableBuilder(
-              listenable: _pages[_active],
-              builder: (context, _) => IconButton(
-                tooltip: 'تراجع',
-                onPressed: _pages[_active].canUndo
-                    ? () {
-                        _pages[_active].undo();
-                        _onPageChanged(_active);
-                      }
-                    : null,
-                icon: const Icon(Icons.undo),
-              ),
-            ),
-            ListenableBuilder(
-              listenable: _pages[_active],
-              builder: (context, _) => IconButton(
-                tooltip: 'إعادة',
-                onPressed: _pages[_active].canRedo
-                    ? () {
-                        _pages[_active].redo();
-                        _onPageChanged(_active);
-                      }
-                    : null,
-                icon: const Icon(Icons.redo),
-              ),
-            ),
-            IconButton(
-              tooltip: 'هذا حل: أخفِ النص المحدد في الاختبار',
-              onPressed: _addAnswerMarker,
-              icon: const Icon(Icons.lightbulb_outline),
-            ),
-            IconButton(tooltip: 'حفظ', onPressed: _save, icon: const Icon(Icons.save)),
-            PopupMenuButton<String>(
-              onSelected: (v) {
-                if (v == 'info') _editLessonInfo();
-                if (v == 'wm') _watermarkSheet();
-                if (v == 'covers') _coversSheet();
-                if (v == 'pdf') _exportPdf();
-              },
-              itemBuilder: (_) => const [
-                PopupMenuItem(value: 'wm', child: Text('العلامة المائية (حجم، ظهور، لون)')),
-                PopupMenuItem(value: 'covers', child: Text('صور الغلاف (أمامي / خلفي)')),
-                PopupMenuItem(value: 'info', child: Text('بيانات الدرس (فيديو، ملاحظة...)')),
-                PopupMenuItem(value: 'pdf', child: Text('تصدير PDF')),
-              ],
-            ),
-          ],
-        ),
-        body: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _title,
-                      onChanged: (_) => setState(() => _dirty = true),
-                      decoration: const InputDecoration(
-                        labelText: 'اسم الدرس',
-                        border: OutlineInputBorder(),
-                        isDense: true,
-                        filled: true,
-                        fillColor: Color(0xff1b1d2b),
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    tooltip: 'لون العنوان',
-                    icon: Icon(Icons.format_color_text, color: _titleColor),
-                    onPressed: () async {
-                      final c = await _pickColor();
-                      if (c != null) setState(() { _titleColor = c; _dirty = true; });
-                    },
-                  ),
-                  IconButton(
-                    tooltip: 'خلفية العنوان',
-                    icon: Icon(Icons.format_color_fill,
-                        color: _titleBg.a == 0 ? Colors.white54 : _titleBg),
-                    onPressed: () async {
-                      final c = await _pickColor();
-                      if (c != null) setState(() { _titleBg = c; _dirty = true; });
-                    },
-                  ),
-                ],
-              ),
-            ),
-            Expanded(child: _buildSheets()),
-            _formatBar(),
-            if (!keyboardOpen) _buildControls(),
-          ],
-        ),
-      ),
-    );
-  }
-
-  /// تكبير يجعل الصفحة كاملة (عرضاً وارتفاعاً) ظاهرة في الشاشة.
-  double _fitZoom(double viewW, double viewH) {
-    final byH = ((viewH - 64) / _a4Ratio) / (viewW - 24);
-    return byH.clamp(.3, 1.0).toDouble();
-  }
-
-  Widget _buildSheets() {
-    return LayoutBuilder(
-      builder: (context, box) {
-        final viewW = box.maxWidth;
-        _viewH = box.maxHeight;
-        if (!_fitted) {
-          _zoom = _fitZoom(viewW, box.maxHeight);
-          _fitted = true;
-        }
-        final sheetW = (viewW - 24) * _zoom;
-        final needsH = sheetW + 24 > viewW;
-        final body = SizedBox(
-          width: math.max(viewW, sheetW + 24),
-          child: Padding(
-            padding: const EdgeInsets.only(top: 4, bottom: 24),
-            child: Column(
-              children: [
-                for (var i = 0; i < _pages.length; i++) ...[
-                  _buildSheetHeader(i, sheetW),
-                  SizedBox(
-                    width: sheetW,
-                    height: sheetW * _a4Ratio,
-                    child: FittedBox(
-                      fit: BoxFit.fill,
-                      child: SizedBox(
-                        width: _a4Width,
-                        height: _a4Width * _a4Ratio,
-                        child: _buildSheet(i, _a4Width, 1.0, sheetW / _a4Width),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 18),
-                ],
-                FilledButton.tonalIcon(
-                  onPressed: _addPage,
-                  icon: const Icon(Icons.add_box),
-                  label: const Text('صفحة جديدة'),
-                ),
-              ],
-            ),
-          ),
-        );
-        return SingleChildScrollView(
-          child: needsH ? SingleChildScrollView(scrollDirection: Axis.horizontal, child: body) : body,
-        );
-      },
-    );
-  }
-
-  Widget _buildSheetHeader(int i, double sheetW) {
-    return SizedBox(
-      width: sheetW,
-      child: Row(
-        children: [
-          Text(
-            'الصفحة ${i + 1} من ${_pages.length}',
-            style: TextStyle(
-              color: i == _active ? const Color(0xffb7a9ff) : Colors.white60,
-              fontSize: 13,
-            ),
-          ),
-          const Spacer(),
-          if (_pages.length > 1)
-            IconButton(
-              visualDensity: VisualDensity.compact,
-              tooltip: 'حذف الصفحة',
-              onPressed: () => _deletePage(i),
-              icon: const Icon(Icons.delete_outline, size: 20),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSheet(int i, double sheetW, double scale, double zs) {
-    final sheetH = sheetW * _a4Ratio;
-    final pad = _margin * scale;
-    final titleH = i == 0 ? _titleBlock * scale : 0.0;
-    final footerH = _footerBlock * scale;
-    final watermark = _watermark.text.trim();
-    final footerNote = _footer.text.trim();
-    final style = _textStyle(scale);
-
-    return Container(
-      width: sheetW,
-      height: sheetH,
-      decoration: BoxDecoration(
-        color: paperColor,
-        borderRadius: BorderRadius.circular(3),
-        boxShadow: const [
-          BoxShadow(color: Colors.black54, blurRadius: 10, offset: Offset(0, 3)),
-        ],
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: Stack(
-        children: [
-          if (watermark.isNotEmpty)
-            Positioned.fill(
-              child: IgnorePointer(
-                child: Center(
-                  child: Transform.rotate(
-                    angle: -0.5,
-                    child: Text(
-                      watermark,
-                      style: TextStyle(
-                        fontFamily: _fontFamily,
-                        fontSize: _wmSize * scale,
-                        fontWeight: FontWeight.bold,
-                        color: _wmColor.withValues(alpha: _wmOpacity),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          if (_lineOpacity > 0)
-            Positioned.fill(
-              child: IgnorePointer(
-                child: CustomPaint(
-                  painter: LinesPainter(
-                    opacity: _lineOpacity,
-                    lineHeight: _fontPt * _lineFactor * scale,
-                    textTop: pad + titleH,
-                    baseline: firstBaseline(_fontPt, scale, _lineFactor),
-                    gap: _fontPt * .18 * scale,
-                    bottomInset: pad + footerH,
-                  ),
-                ),
-              ),
-            ),
-          if (i == 0)
-            Positioned(
-              top: pad,
-              left: pad,
-              right: pad,
-              height: titleH,
-              child: IgnorePointer(
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: _titleBg,
-                    borderRadius: BorderRadius.circular(6 * scale),
-                  ),
-                  alignment: Alignment.center,
-                  child: Text(
-                    _title.text,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontFamily: _fontFamily,
-                      fontSize: 20 * scale,
-                      color: _titleColor,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          // العناصر تحت النص: تكتب فوقها بحرية
-          for (final o in _objects[i]) _objectVisual(o),
-          // الحقل يغطي الصفحة كلها، فأي لمسة في أي مكان تضع المؤشر
-          Positioned.fill(
-            child: TextField(
-              key: ObjectKey(_pages[i]),
-              controller: _pages[i],
-              focusNode: _nodes[i],
-              onChanged: (_) => _onPageChanged(i),
-              onTapOutside: (_) {},
-              maxLines: null,
-              expands: true,
-              cursorColor: Colors.deepPurple,
-              textAlignVertical: TextAlignVertical.top,
-              textDirection: TextDirection.rtl,
-              textAlign: TextAlign.right,
-              style: style,
-              strutStyle: _strut(scale),
-              decoration: InputDecoration(
-                isCollapsed: true,
-                border: InputBorder.none,
-                contentPadding: EdgeInsets.fromLTRB(pad, pad + titleH, pad, pad + footerH),
-                hintText: i == 0
-                    ? 'اكتب ملخصك هنا...\nحدد نصاً ثم اضغط أيقونة المصباح لإخفائه كإجابة في الاختبار'
-                    : null,
-                hintStyle: TextStyle(
-                  fontFamily: _fontFamily,
-                  fontSize: _fontPt * scale * .85,
-                  color: Colors.black38,
-                ),
-              ),
-            ),
-          ),
-          for (final o in _objects[i]) ..._objectHandles(i, o, zs),
-          Positioned(
-            left: pad,
-            right: pad,
-            bottom: pad * .35,
-            height: footerH,
-            child: IgnorePointer(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  if (footerNote.isNotEmpty)
-                    Text(
-                      footerNote,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontFamily: _fontFamily,
-                        fontSize: 8 * scale,
-                        color: Colors.black45,
-                      ),
-                    ),
-                  Text(
-                    '${i + 1}',
-                    style: TextStyle(
-                      fontFamily: _fontFamily,
-                      fontSize: 10 * scale,
-                      color: Colors.black54,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildControls() {
-    return Container(
-      color: const Color(0xff171824),
-      padding: const EdgeInsets.fromLTRB(12, 2, 12, 6),
-      child: SafeArea(
-        top: false,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Row(
-              children: [
-                const Text('تكبير الصفحة'),
-                IconButton(
-                  visualDensity: VisualDensity.compact,
-                  tooltip: 'تصغير',
-                  onPressed: () => setState(() => _zoom = math.max(.3, _zoom - .1)),
-                  icon: const Icon(Icons.zoom_out),
-                ),
-                Expanded(
-                  child: Slider(
-                    value: _zoom.clamp(.3, 3.0).toDouble(),
-                    min: .3,
-                    max: 3,
-                    onChanged: (v) => setState(() => _zoom = v),
-                  ),
-                ),
-                IconButton(
-                  visualDensity: VisualDensity.compact,
-                  tooltip: 'تكبير',
-                  onPressed: () => setState(() => _zoom = math.min(3, _zoom + .1)),
-                  icon: const Icon(Icons.zoom_in),
-                ),
-                IconButton(
-                  visualDensity: VisualDensity.compact,
-                  tooltip: 'إظهار الصفحة كاملة',
-                  onPressed: () => setState(() => _zoom = _fitZoom(MediaQuery.sizeOf(context).width, _viewH)),
-                  icon: const Icon(Icons.fit_screen),
-                ),
-              ],
-            ),
-            Row(
-              children: [
-                const Text('تباعد السطور'),
-                Expanded(
-                  child: Slider(
-                    value: _lineFactor,
-                    min: 1.3,
-                    max: 2.6,
-                    onChanged: (v) => setState(() => _lineFactor = v),
-                    onChangeEnd: (_) {
-                      if (_reflowAll()) setState(() => _dirty = true);
-                    },
-                  ),
-                ),
-                const SizedBox(width: 28),
-              ],
-            ),
-            Row(
-              children: [
-                const Text('إظهار السطور'),
-                Expanded(
-                  child: Slider(
-                    value: _lineOpacity,
-                    min: 0,
-                    max: .35,
-                    onChanged: (v) => setState(() => _lineOpacity = v),
-                  ),
-                ),
-                const SizedBox(width: 28),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
+          
