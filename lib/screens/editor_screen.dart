@@ -82,13 +82,18 @@ class _EditorScreenState extends State<EditorScreen> {
   late String _coverBack = widget.lesson.coverBack;
   bool _fgMode = true;
   List<String> _favSymbols = [];
-  final List<UndoHistoryController> _undos = [];
   final List<FocusNode> _nodes = [];
 
   int _active = 0;
   double _zoom = 1.0;
   late double _fontPt = widget.lesson.fontPt;
-  late double _lineOpacity = widget.lesson.lineOpacity;
+  double _lineOpacity = 0; // السطور محذوفة افتراضياً (يمكن إظهارها من المنزلق)
+  bool _fitted = false;
+  double _viewH = 600;
+  bool _sizeBar = false;
+  double? _pendSize;
+  List<int> _recentColors = [];
+  List<String> _recentSymbols = [];
   late Color _inkColor = Color(widget.lesson.inkColor);
   late double _wmSize = widget.lesson.wmSize;
   late double _wmOpacity = widget.lesson.wmOpacity;
@@ -106,8 +111,15 @@ class _EditorScreenState extends State<EditorScreen> {
         widget.lesson.pages[i],
         widget.lesson.pageRuns[i],
         List<PageObject>.of(widget.lesson.pageObjects[i]),
+        widget.lesson.pageSizes[i],
       );
     }
+    AppStorage.loadStrings('recentColors').then((v) {
+      if (mounted) setState(() => _recentColors = v.map(int.tryParse).whereType<int>().toList());
+    });
+    AppStorage.loadStrings('recentSymbols').then((v) {
+      if (mounted) setState(() => _recentSymbols = v);
+    });
     AppStorage.loadFavSymbols().then((v) {
       if (mounted) setState(() => _favSymbols = v.toList());
     });
@@ -121,9 +133,6 @@ class _EditorScreenState extends State<EditorScreen> {
     for (final c in [_title, _watermark, _footer, _video, ..._pages]) {
       c.dispose();
     }
-    for (final u in _undos) {
-      u.dispose();
-    }
     for (final n in _nodes) {
       n.dispose();
     }
@@ -132,16 +141,15 @@ class _EditorScreenState extends State<EditorScreen> {
 
   // ---------------------------------------------------------------- pages
 
-  void _addPageObjects(String text, [List<int>? runs, List<PageObject>? objs]) {
+  void _addPageObjects(String text, [List<int>? runs, List<PageObject>? objs, List<int>? sizes]) {
     final node = FocusNode();
     node.addListener(() {
       if (!node.hasFocus) return;
       final idx = _nodes.indexOf(node);
       if (idx >= 0 && idx != _active && mounted) setState(() => _active = idx);
     });
-    _pages.add(RichController(text: text, runs: runs));
+    _pages.add(RichController(text: text, runs: runs, sizes: sizes));
     _objects.add(objs ?? <PageObject>[]);
-    _undos.add(UndoHistoryController());
     _nodes.add(node);
   }
 
@@ -180,10 +188,9 @@ class _EditorScreenState extends State<EditorScreen> {
     }
     setState(() {
       final c = _pages.removeAt(index);
-      final u = _undos.removeAt(index);
       final n = _nodes.removeAt(index);
       _objects.removeAt(index);
-      _disposeLater([c, u, n]);
+      _disposeLater([c, n]);
       if (_active >= _pages.length) _active = _pages.length - 1;
       _dirty = true;
     });
@@ -205,7 +212,7 @@ class _EditorScreenState extends State<EditorScreen> {
         fontFamily: _fontFamily,
         fontSize: _fontPt * scale,
         height: _lineFactor,
-        forceStrutHeight: true,
+        forceStrutHeight: false,
       );
 
   /// الارتفاع المتاح للنص في الصفحة [index] بمقياس [scale].
@@ -216,18 +223,14 @@ class _EditorScreenState extends State<EditorScreen> {
   }
 
   /// يرجع موضع القص إن كان النص أطول من الصفحة، وإلا null.
-  int? _overflowOffset(String text, double maxWidth, double maxHeight, TextStyle style) {
+  int? _overflowOffset(RichController c, double maxWidth, double maxHeight, TextStyle style) {
+    final text = c.text;
     if (text.isEmpty) return null;
     final tp = TextPainter(
-      text: TextSpan(text: text, style: style),
+      text: TextSpan(style: style, children: richSpans(text, c.fg, c.bg, sz: c.sz)),
       textDirection: TextDirection.rtl,
       textAlign: TextAlign.right,
-      strutStyle: StrutStyle(
-        fontFamily: _fontFamily,
-        fontSize: style.fontSize,
-        height: _lineFactor,
-        forceStrutHeight: true,
-      ),
+      strutStyle: _strut(1.0),
     )..layout(maxWidth: maxWidth);
     try {
       if (tp.height <= maxHeight + 0.5) return null;
@@ -257,16 +260,16 @@ class _EditorScreenState extends State<EditorScreen> {
     _reflowing = true;
     var changed = false;
     try {
-      final sheetW = _sheetWidth();
-      final scale = sheetW / _a4Width;
-      final textW = sheetW - 2 * _margin * scale;
+      // التقسيم يتم دائماً بمقياس ثابت، فلا يتأثر بالتكبير أو التصغير إطلاقاً.
+      const scale = 1.0;
+      final textW = _a4Width - 2 * _margin;
       final style = _textStyle(scale);
       var idx = start;
       var guard = 0;
       while (idx < _pages.length && guard++ < 200) {
         final ctrl = _pages[idx];
         final text = ctrl.text;
-        final cut = _overflowOffset(text, textW, _availableHeight(idx, scale), style);
+        final cut = _overflowOffset(ctrl, textW, _availableHeight(idx, scale), style);
         if (cut == null) {
           idx++;
           continue;
@@ -278,11 +281,13 @@ class _EditorScreenState extends State<EditorScreen> {
         var tail = text.substring(cut);
         var tfg = ctrl.fg.sublist(cut);
         var tbg = ctrl.bg.sublist(cut);
+        var tsz = ctrl.sz.sublist(cut);
         var removed = 0;
         if (tail.startsWith('\n')) {
           tail = tail.substring(1);
           tfg = tfg.sublist(1);
           tbg = tbg.sublist(1);
+          tsz = tsz.sublist(1);
           removed = 1;
         }
         if (idx + 1 >= _pages.length) {
@@ -292,8 +297,10 @@ class _EditorScreenState extends State<EditorScreen> {
         final merged = next.text.isEmpty ? tail : '$tail\n${next.text}';
         final mfg = next.text.isEmpty ? tfg : [...tfg, 0, ...next.fg];
         final mbg = next.text.isEmpty ? tbg : [...tbg, 0, ...next.bg];
+        final msz = next.text.isEmpty ? tsz : [...tsz, 0, ...next.sz];
         final headFg = ctrl.fg.sublist(0, cut);
         final headBg = ctrl.bg.sublist(0, cut);
+        final headSz = ctrl.sz.sublist(0, cut);
 
         final cursorMoves = cursor > cut;
         ctrl.setContent(
@@ -301,11 +308,13 @@ class _EditorScreenState extends State<EditorScreen> {
           headFg,
           headBg,
           TextSelection.collapsed(offset: cursor < 0 ? cut : math.min(cursor, cut)),
+          z: headSz,
+          record: false,
         );
         final nextCursor = cursorMoves
             ? math.max(0, math.min(cursor - cut - removed, merged.length))
             : 0;
-        next.setContent(merged, mfg, mbg, TextSelection.collapsed(offset: nextCursor));
+        next.setContent(merged, mfg, mbg, TextSelection.collapsed(offset: nextCursor), z: msz, record: false);
         if (cursorMoves) {
           final target = idx + 1;
           WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -352,6 +361,7 @@ class _EditorScreenState extends State<EditorScreen> {
     l.titleBg = _titleBg.toARGB32();
     l.pages = _pages.map((p) => p.text).toList();
     l.pageRuns = _pages.map((p) => encodeRuns(p.fg, p.bg)).toList();
+    l.pageSizes = _pages.map((p) => encodeSizes(p.sz)).toList();
     l.pageObjects = _objects.map((e) => List<PageObject>.of(e)).toList();
     l.lineFactor = _lineFactor;
     l.coverFront = _coverFront;
@@ -408,7 +418,13 @@ class _EditorScreenState extends State<EditorScreen> {
     }
   }
 
-  Future<Color?> _pickColor() => showModalBottomSheet<Color>(
+  Future<Color?> _pickColor() async {
+    final c = await _pickColorSheet();
+    if (c != null && c.a != 0) _pushRecentColor(c.toARGB32());
+    return c;
+  }
+
+  Future<Color?> _pickColorSheet() => showModalBottomSheet<Color>(
         context: context,
         builder: (ctx) => SafeArea(
           child: Padding(
@@ -417,6 +433,15 @@ class _EditorScreenState extends State<EditorScreen> {
               spacing: 10,
               runSpacing: 10,
               children: [
+                for (final r in _recentColors)
+                  InkWell(
+                    onTap: () => Navigator.pop(ctx, Color(r)),
+                    child: CircleAvatar(
+                      radius: 18,
+                      backgroundColor: Color(r),
+                      child: const Icon(Icons.history, size: 14, color: Colors.white70),
+                    ),
+                  ),
                 for (final c in _inkPalette)
                   InkWell(
                     onTap: () => Navigator.pop(ctx, c),
@@ -574,6 +599,7 @@ class _EditorScreenState extends State<EditorScreen> {
   void _applyColor(Color c) {
     final ctrl = _pages[_active];
     final v = c.a == 0 ? 0 : c.toARGB32();
+    _pushRecentColor(v);
     final sel = ctrl.selection;
     if (sel.isValid && !sel.isCollapsed) {
       if (_fgMode) {
@@ -591,7 +617,38 @@ class _EditorScreenState extends State<EditorScreen> {
     setState(() => _dirty = true);
   }
 
+  void _pushRecentColor(int v) {
+    if (v == 0) return;
+    _recentColors.remove(v);
+    _recentColors.insert(0, v);
+    if (_recentColors.length > 10) _recentColors.removeLast();
+    AppStorage.saveStrings('recentColors', _recentColors.map((e) => e.toString()).toList());
+  }
+
+  void _pushRecentSymbol(String t) {
+    _recentSymbols.remove(t);
+    _recentSymbols.insert(0, t);
+    if (_recentSymbols.length > 10) _recentSymbols.removeLast();
+    AppStorage.saveStrings('recentSymbols', _recentSymbols);
+  }
+
+  void _applySize(int v) {
+    final ctrl = _pages[_active];
+    final sel = ctrl.selection;
+    if (sel.isValid && !sel.isCollapsed) {
+      ctrl.applySize(sel.start, sel.end, v);
+    } else {
+      ctrl.curSz = v;
+    }
+    setState(() {
+      _dirty = true;
+      _pendSize = null;
+    });
+    _onPageChanged(_active);
+  }
+
   void _insertText(String t) {
+    _pushRecentSymbol(t);
     final c = _pages[_active];
     final sel = c.selection;
     final a = sel.isValid ? sel.start : c.text.length;
@@ -750,53 +807,116 @@ class _EditorScreenState extends State<EditorScreen> {
     }
   }
 
-  Widget _objectBox(int page, PageObject o, double scale) {
+  /// جسم العنصر: يُرسم تحت النص ولا يلتقط اللمس، فيمكنك الكتابة فوقه مباشرة.
+  Widget _objectVisual(PageObject o) {
     return Positioned(
-      left: o.x * scale,
-      top: o.y * scale,
-      width: o.w * scale,
-      height: o.h * scale,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: () => _editObject(page, o),
-        onPanUpdate: (d) => setState(() {
-          o.x = (o.x + d.delta.dx / scale).clamp(0.0, math.max(0.0, _a4Width - o.w)).toDouble();
-          o.y = (o.y + d.delta.dy / scale).clamp(0.0, math.max(0.0, _pageH - o.h)).toDouble();
-          _dirty = true;
-        }),
-        child: Stack(
-          children: [
-            Positioned.fill(child: buildObjectWidget(o, scale)),
-            Positioned.fill(
-              child: IgnorePointer(
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    border: Border.all(color: Colors.deepPurpleAccent.withValues(alpha: .5)),
-                  ),
-                ),
-              ),
+      left: o.x,
+      top: o.y,
+      width: o.w,
+      height: o.h,
+      child: IgnorePointer(child: buildObjectWidget(o, 1)),
+    );
+  }
+
+  Widget _round(double size, IconData icon, {Color color = Colors.deepPurpleAccent}) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+      child: Icon(icon, size: size * .56, color: Colors.white),
+    );
+  }
+
+  /// مقابض العنصر فقط (تحريك، تغيير حجم، تعديل، نسخ، تثبيت). [zs] = مقياس العرض.
+  List<Widget> _objectHandles(int page, PageObject o, double zs) {
+    final hs = (30 / zs).clamp(22.0, 70.0).toDouble();
+    if (o.locked) {
+      return [
+        Positioned(
+          left: o.x,
+          top: o.y,
+          child: GestureDetector(
+            onTap: () => setState(() {
+              o.locked = false;
+              _dirty = true;
+            }),
+            child: Opacity(opacity: .55, child: _round(hs * .8, Icons.lock, color: Colors.black54)),
+          ),
+        ),
+      ];
+    }
+    final barLeft = math.max(0.0, o.x + o.w - 3 * (hs + 4));
+    final barTop = o.y >= hs + 2 ? o.y - hs - 2 : o.y + 2;
+    return [
+      Positioned(
+        left: o.x,
+        top: o.y,
+        width: o.w,
+        height: o.h,
+        child: IgnorePointer(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              border: Border.all(color: Colors.deepPurpleAccent.withValues(alpha: .6), width: 1 / zs),
             ),
-            Positioned(
-              right: 0,
-              bottom: 0,
-              child: GestureDetector(
-                onPanUpdate: (d) => setState(() {
-                  o.w = (o.w + d.delta.dx / scale).clamp(40.0, math.max(40.0, _a4Width - o.x)).toDouble();
-                  o.h = (o.h + d.delta.dy / scale).clamp(30.0, math.max(30.0, _pageH - o.y)).toDouble();
-                  _dirty = true;
-                }),
-                child: Container(
-                  width: 28,
-                  height: 28,
-                  decoration: const BoxDecoration(color: Colors.deepPurpleAccent, shape: BoxShape.circle),
-                  child: const Icon(Icons.open_in_full, size: 14, color: Colors.white),
-                ),
-              ),
+          ),
+        ),
+      ),
+      // تحريك
+      Positioned(
+        left: o.x,
+        top: o.y,
+        child: GestureDetector(
+          onPanUpdate: (d) => setState(() {
+            o.x = (o.x + d.delta.dx).clamp(0.0, math.max(0.0, _a4Width - o.w)).toDouble();
+            o.y = (o.y + d.delta.dy).clamp(0.0, math.max(0.0, _pageH - o.h)).toDouble();
+            _dirty = true;
+          }),
+          child: _round(hs, Icons.open_with),
+        ),
+      ),
+      // تغيير الحجم
+      Positioned(
+        left: o.x + o.w - hs,
+        top: o.y + o.h - hs,
+        child: GestureDetector(
+          onPanUpdate: (d) => setState(() {
+            o.w = (o.w + d.delta.dx).clamp(40.0, math.max(40.0, _a4Width - o.x)).toDouble();
+            o.h = (o.h + d.delta.dy).clamp(30.0, math.max(30.0, _pageH - o.y)).toDouble();
+            _dirty = true;
+          }),
+          child: _round(hs, Icons.open_in_full),
+        ),
+      ),
+      // تعديل / نسخ / تثبيت
+      Positioned(
+        left: barLeft,
+        top: barTop,
+        child: Row(
+          children: [
+            GestureDetector(onTap: () => _editObject(page, o), child: _round(hs, Icons.edit)),
+            SizedBox(width: 4),
+            GestureDetector(
+              onTap: () => setState(() {
+                final c = o.copy();
+                c.x = math.min(c.x, math.max(0.0, _a4Width - c.w));
+                c.y = math.min(c.y, math.max(0.0, _pageH - c.h));
+                _objects[page].add(c);
+                _dirty = true;
+              }),
+              child: _round(hs, Icons.copy, color: Colors.teal),
+            ),
+            SizedBox(width: 4),
+            GestureDetector(
+              onTap: () => setState(() {
+                o.locked = true;
+                _dirty = true;
+              }),
+              child: _round(hs, Icons.lock_open, color: Colors.orange),
             ),
           ],
         ),
       ),
-    );
+    ];
   }
 
   Widget _colorBtn(String label, int value, void Function(int) set, StateSetter ss) {
@@ -1105,14 +1225,107 @@ class _EditorScreenState extends State<EditorScreen> {
     );
   }
 
+  Widget _sizePanel() {
+    final ctrl = _pages[_active];
+    return ListenableBuilder(
+      listenable: ctrl,
+      builder: (context, _) {
+        final sel = ctrl.selection;
+        final has = sel.isValid && !sel.isCollapsed && sel.end <= ctrl.text.length;
+        final raw = has ? ctrl.text.substring(sel.start, sel.end).replaceAll('\n', ' ') : '';
+        final shown = raw.isEmpty
+            ? 'حدّد نصاً لترى كيف سيبدو بالحجم الجديد'
+            : (raw.length > 70 ? '${raw.substring(0, 70)}…' : raw);
+        final base = has
+            ? (ctrl.sz[sel.start] == 0 ? _fontPt : ctrl.sz[sel.start].toDouble())
+            : (ctrl.curSz == 0 ? _fontPt : ctrl.curSz.toDouble());
+        final v = (_pendSize ?? base).clamp(6.0, 60.0).toDouble();
+        return Container(
+          margin: const EdgeInsets.fromLTRB(8, 2, 8, 4),
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(color: const Color(0xff232536), borderRadius: BorderRadius.circular(10)),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: double.infinity,
+                constraints: const BoxConstraints(maxHeight: 84),
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(color: paperColor, borderRadius: BorderRadius.circular(6)),
+                clipBehavior: Clip.hardEdge,
+                child: Text(
+                  shown,
+                  textDirection: TextDirection.rtl,
+                  style: TextStyle(
+                    fontFamily: _fontFamily,
+                    fontSize: raw.isEmpty ? 12 : v,
+                    color: raw.isEmpty ? Colors.black45 : _inkColor,
+                    height: _lineFactor,
+                  ),
+                ),
+              ),
+              Row(
+                children: [
+                  IconButton(
+                    visualDensity: VisualDensity.compact,
+                    onPressed: () => setState(() => _pendSize = math.max(6, v - 1)),
+                    icon: const Icon(Icons.remove_circle_outline),
+                  ),
+                  Expanded(
+                    child: Slider(
+                      value: v,
+                      min: 6,
+                      max: 60,
+                      divisions: 54,
+                      label: v.round().toString(),
+                      onChanged: (x) => setState(() => _pendSize = x.roundToDouble()),
+                    ),
+                  ),
+                  IconButton(
+                    visualDensity: VisualDensity.compact,
+                    onPressed: () => setState(() => _pendSize = math.min(60, v + 1)),
+                    icon: const Icon(Icons.add_circle_outline),
+                  ),
+                  SizedBox(width: 26, child: Text(v.round().toString())),
+                ],
+              ),
+              Row(
+                children: [
+                  Expanded(
+                    child: FilledButton(
+                      onPressed: () => _applySize(v.round()),
+                      child: Text(has ? 'تطبيق على المحدد' : 'تطبيق على ما سأكتبه'),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  OutlinedButton(onPressed: () => _applySize(0), child: const Text('الحجم الافتراضي')),
+                  IconButton(
+                    onPressed: () => setState(() {
+                      _sizeBar = false;
+                      _pendSize = null;
+                    }),
+                    icon: const Icon(Icons.close),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   Widget _formatBar() {
     final ctrl = _pages[_active];
+    final seen = <String>{};
+    final symbols = [..._favSymbols, ..._recentSymbols].where(seen.add).toList();
     return Container(
       color: const Color(0xff1b1d2b),
       padding: const EdgeInsets.symmetric(vertical: 3),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
+          if (_sizeBar) _sizePanel(),
           SizedBox(
             height: 40,
             child: ListView(
@@ -1121,6 +1334,10 @@ class _EditorScreenState extends State<EditorScreen> {
               children: [
                 _chip(Icons.format_color_text, 'لون النص', selected: _fgMode, onTap: () => setState(() => _fgMode = true)),
                 _chip(Icons.border_color, 'تظليل', selected: !_fgMode, onTap: () => setState(() => _fgMode = false)),
+                _chip(Icons.format_size, 'حجم', selected: _sizeBar, onTap: () => setState(() {
+                      _sizeBar = !_sizeBar;
+                      _pendSize = null;
+                    })),
                 _chip(Icons.table_chart, 'جدول', onTap: _addTable),
                 _chip(Icons.image, 'صورة', onTap: _addImage),
                 _chip(Icons.crop_square, 'بطاقة', onTap: _addCard),
@@ -1134,66 +1351,44 @@ class _EditorScreenState extends State<EditorScreen> {
               listenable: ctrl,
               builder: (context, _) {
                 final cur = _fgMode ? ctrl.curFg : ctrl.curBg;
+                Widget dot(Color c, VoidCallback onTap, {Widget? child}) => Padding(
+                      padding: const EdgeInsets.all(4),
+                      child: InkWell(onTap: onTap, child: CircleAvatar(radius: 14, backgroundColor: c, child: child)),
+                    );
+                Widget check(Color c) => Icon(
+                      Icons.check,
+                      size: 16,
+                      color: c.computeLuminance() > .5 ? Colors.black : Colors.white,
+                    );
                 return ListView(
                   scrollDirection: Axis.horizontal,
                   padding: const EdgeInsets.symmetric(horizontal: 8),
                   children: [
-                    Padding(
-                      padding: const EdgeInsets.all(4),
-                      child: InkWell(
-                        onTap: () async {
-                          final c = await _pickFromAll(context);
-                          if (c != null) _applyColor(c);
-                        },
-                        child: const CircleAvatar(
-                          radius: 14,
-                          backgroundColor: Colors.deepPurple,
-                          child: Icon(Icons.add, size: 16, color: Colors.white),
-                        ),
-                      ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.all(4),
-                      child: InkWell(
-                        onTap: () => _applyColor(const Color(0x00000000)),
-                        child: CircleAvatar(
-                          radius: 14,
-                          backgroundColor: Colors.white24,
-                          child: Icon(cur == 0 ? Icons.check : Icons.block, size: 16),
-                        ),
-                      ),
-                    ),
+                    dot(Colors.deepPurple, () async {
+                      final c = await _pickFromAll(context);
+                      if (c != null) _applyColor(c);
+                    }, child: const Icon(Icons.add, size: 16, color: Colors.white)),
+                    dot(Colors.white24, () => _applyColor(const Color(0x00000000)),
+                        child: Icon(cur == 0 ? Icons.check : Icons.block, size: 16)),
+                    for (final r in _recentColors)
+                      dot(Color(r), () => _applyColor(Color(r)), child: cur == r ? check(Color(r)) : null),
+                    if (_recentColors.isNotEmpty)
+                      const SizedBox(height: 28, child: VerticalDivider(width: 10, color: Colors.white24)),
                     for (final c in _inkPalette)
-                      Padding(
-                        padding: const EdgeInsets.all(4),
-                        child: InkWell(
-                          onTap: () => _applyColor(c),
-                          child: CircleAvatar(
-                            radius: 14,
-                            backgroundColor: c,
-                            child: cur == c.toARGB32()
-                                ? Icon(
-                                    Icons.check,
-                                    size: 16,
-                                    color: c.computeLuminance() > .5 ? Colors.black : Colors.white,
-                                  )
-                                : null,
-                          ),
-                        ),
-                      ),
+                      dot(c, () => _applyColor(c), child: cur == c.toARGB32() ? check(c) : null),
                   ],
                 );
               },
             ),
           ),
-          if (_favSymbols.isNotEmpty)
+          if (symbols.isNotEmpty)
             SizedBox(
               height: 40,
               child: ListView(
                 scrollDirection: Axis.horizontal,
                 padding: const EdgeInsets.symmetric(horizontal: 8),
                 children: [
-                  for (final sym in _favSymbols)
+                  for (final sym in symbols)
                     Padding(
                       padding: const EdgeInsets.all(2),
                       child: GestureDetector(
@@ -1203,7 +1398,7 @@ class _EditorScreenState extends State<EditorScreen> {
                           width: 38,
                           alignment: Alignment.center,
                           decoration: BoxDecoration(
-                            color: Colors.white10,
+                            color: _favSymbols.contains(sym) ? Colors.deepPurple.withValues(alpha: .4) : Colors.white10,
                             borderRadius: BorderRadius.circular(8),
                           ),
                           child: Text(sym, style: const TextStyle(fontSize: 22)),
@@ -1223,7 +1418,6 @@ class _EditorScreenState extends State<EditorScreen> {
   @override
   Widget build(BuildContext context) {
     final keyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 0;
-    final undo = _undos[_active];
 
     return PopScope(
       canPop: !_dirty,
@@ -1235,19 +1429,29 @@ class _EditorScreenState extends State<EditorScreen> {
         appBar: AppBar(
           title: const Text('محرر الدرس'),
           actions: [
-            ValueListenableBuilder<UndoHistoryValue>(
-              valueListenable: undo,
-              builder: (context, value, _) => IconButton(
+            ListenableBuilder(
+              listenable: _pages[_active],
+              builder: (context, _) => IconButton(
                 tooltip: 'تراجع',
-                onPressed: value.canUndo ? undo.undo : null,
+                onPressed: _pages[_active].canUndo
+                    ? () {
+                        _pages[_active].undo();
+                        _onPageChanged(_active);
+                      }
+                    : null,
                 icon: const Icon(Icons.undo),
               ),
             ),
-            ValueListenableBuilder<UndoHistoryValue>(
-              valueListenable: undo,
-              builder: (context, value, _) => IconButton(
+            ListenableBuilder(
+              listenable: _pages[_active],
+              builder: (context, _) => IconButton(
                 tooltip: 'إعادة',
-                onPressed: value.canRedo ? undo.redo : null,
+                onPressed: _pages[_active].canRedo
+                    ? () {
+                        _pages[_active].redo();
+                        _onPageChanged(_active);
+                      }
+                    : null,
                 icon: const Icon(Icons.redo),
               ),
             ),
@@ -1321,24 +1525,43 @@ class _EditorScreenState extends State<EditorScreen> {
     );
   }
 
-  Widget _buildSheets() {
-    final viewW = MediaQuery.sizeOf(context).width;
-    final sheetW = _sheetWidth();
-    final scale = sheetW / _a4Width;
-    final contentW = math.max(viewW, sheetW + 24);
+  /// تكبير يجعل الصفحة كاملة (عرضاً وارتفاعاً) ظاهرة في الشاشة.
+  double _fitZoom(double viewW, double viewH) {
+    final byH = ((viewH - 64) / _a4Ratio) / (viewW - 24);
+    return byH.clamp(.3, 1.0).toDouble();
+  }
 
-    return SingleChildScrollView(
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: SizedBox(
-          width: contentW,
+  Widget _buildSheets() {
+    return LayoutBuilder(
+      builder: (context, box) {
+        final viewW = box.maxWidth;
+        _viewH = box.maxHeight;
+        if (!_fitted) {
+          _zoom = _fitZoom(viewW, box.maxHeight);
+          _fitted = true;
+        }
+        final sheetW = (viewW - 24) * _zoom;
+        final needsH = sheetW + 24 > viewW;
+        final body = SizedBox(
+          width: math.max(viewW, sheetW + 24),
           child: Padding(
             padding: const EdgeInsets.only(top: 4, bottom: 24),
             child: Column(
               children: [
                 for (var i = 0; i < _pages.length; i++) ...[
                   _buildSheetHeader(i, sheetW),
-                  _buildSheet(i, sheetW, scale),
+                  SizedBox(
+                    width: sheetW,
+                    height: sheetW * _a4Ratio,
+                    child: FittedBox(
+                      fit: BoxFit.fill,
+                      child: SizedBox(
+                        width: _a4Width,
+                        height: _a4Width * _a4Ratio,
+                        child: _buildSheet(i, _a4Width, 1.0, sheetW / _a4Width),
+                      ),
+                    ),
+                  ),
                   const SizedBox(height: 18),
                 ],
                 FilledButton.tonalIcon(
@@ -1349,8 +1572,11 @@ class _EditorScreenState extends State<EditorScreen> {
               ],
             ),
           ),
-        ),
-      ),
+        );
+        return SingleChildScrollView(
+          child: needsH ? SingleChildScrollView(scrollDirection: Axis.horizontal, child: body) : body,
+        );
+      },
     );
   }
 
@@ -1379,7 +1605,7 @@ class _EditorScreenState extends State<EditorScreen> {
     );
   }
 
-  Widget _buildSheet(int i, double sheetW, double scale) {
+  Widget _buildSheet(int i, double sheetW, double scale, double zs) {
     final sheetH = sheetW * _a4Ratio;
     final pad = _margin * scale;
     final titleH = i == 0 ? _titleBlock * scale : 0.0;
@@ -1441,36 +1667,37 @@ class _EditorScreenState extends State<EditorScreen> {
               left: pad,
               right: pad,
               height: titleH,
-              child: Container(
-                decoration: BoxDecoration(
-                  color: _titleBg,
-                  borderRadius: BorderRadius.circular(6 * scale),
-                ),
-                alignment: Alignment.center,
-                child: Text(
-                  _title.text,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontFamily: _fontFamily,
-                    fontSize: 20 * scale,
-                    color: _titleColor,
+              child: IgnorePointer(
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: _titleBg,
+                    borderRadius: BorderRadius.circular(6 * scale),
+                  ),
+                  alignment: Alignment.center,
+                  child: Text(
+                    _title.text,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontFamily: _fontFamily,
+                      fontSize: 20 * scale,
+                      color: _titleColor,
+                    ),
                   ),
                 ),
               ),
             ),
-          Positioned(
-            top: pad + titleH,
-            left: pad,
-            right: pad,
-            bottom: pad + footerH,
+          // العناصر تحت النص: تكتب فوقها بحرية
+          for (final o in _objects[i]) _objectVisual(o),
+          // الحقل يغطي الصفحة كلها، فأي لمسة في أي مكان تضع المؤشر
+          Positioned.fill(
             child: TextField(
               key: ObjectKey(_pages[i]),
               controller: _pages[i],
               focusNode: _nodes[i],
-              undoController: _undos[i],
               onChanged: (_) => _onPageChanged(i),
+              onTapOutside: (_) {},
               maxLines: null,
               expands: true,
               cursorColor: Colors.deepPurple,
@@ -1482,6 +1709,7 @@ class _EditorScreenState extends State<EditorScreen> {
               decoration: InputDecoration(
                 isCollapsed: true,
                 border: InputBorder.none,
+                contentPadding: EdgeInsets.fromLTRB(pad, pad + titleH, pad, pad + footerH),
                 hintText: i == 0
                     ? 'اكتب ملخصك هنا...\nحدد نصاً ثم اضغط أيقونة المصباح لإخفائه كإجابة في الاختبار'
                     : null,
@@ -1493,35 +1721,37 @@ class _EditorScreenState extends State<EditorScreen> {
               ),
             ),
           ),
-          for (final o in _objects[i]) _objectBox(i, o, scale),
+          for (final o in _objects[i]) ..._objectHandles(i, o, zs),
           Positioned(
             left: pad,
             right: pad,
             bottom: pad * .35,
             height: footerH,
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                if (footerNote.isNotEmpty)
+            child: IgnorePointer(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  if (footerNote.isNotEmpty)
+                    Text(
+                      footerNote,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontFamily: _fontFamily,
+                        fontSize: 8 * scale,
+                        color: Colors.black45,
+                      ),
+                    ),
                   Text(
-                    footerNote,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                    '${i + 1}',
                     style: TextStyle(
                       fontFamily: _fontFamily,
-                      fontSize: 8 * scale,
-                      color: Colors.black45,
+                      fontSize: 10 * scale,
+                      color: Colors.black54,
                     ),
                   ),
-                Text(
-                  '${i + 1}',
-                  style: TextStyle(
-                    fontFamily: _fontFamily,
-                    fontSize: 10 * scale,
-                    color: Colors.black54,
-                  ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ],
@@ -1532,7 +1762,7 @@ class _EditorScreenState extends State<EditorScreen> {
   Widget _buildControls() {
     return Container(
       color: const Color(0xff171824),
-      padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+      padding: const EdgeInsets.fromLTRB(12, 2, 12, 6),
       child: SafeArea(
         top: false,
         child: Column(
@@ -1544,13 +1774,13 @@ class _EditorScreenState extends State<EditorScreen> {
                 IconButton(
                   visualDensity: VisualDensity.compact,
                   tooltip: 'تصغير',
-                  onPressed: () => setState(() => _zoom = math.max(.6, _zoom - .2)),
+                  onPressed: () => setState(() => _zoom = math.max(.3, _zoom - .1)),
                   icon: const Icon(Icons.zoom_out),
                 ),
                 Expanded(
                   child: Slider(
-                    value: _zoom,
-                    min: .6,
+                    value: _zoom.clamp(.3, 3.0).toDouble(),
+                    min: .3,
                     max: 3,
                     onChanged: (v) => setState(() => _zoom = v),
                   ),
@@ -1558,40 +1788,15 @@ class _EditorScreenState extends State<EditorScreen> {
                 IconButton(
                   visualDensity: VisualDensity.compact,
                   tooltip: 'تكبير',
-                  onPressed: () => setState(() => _zoom = math.min(3, _zoom + .2)),
+                  onPressed: () => setState(() => _zoom = math.min(3, _zoom + .1)),
                   icon: const Icon(Icons.zoom_in),
                 ),
-              ],
-            ),
-            Row(
-              children: [
-                const Text('حجم الخط'),
-                Expanded(
-                  child: Slider(
-                    value: _fontPt,
-                    min: 9,
-                    max: 24,
-                    onChanged: (v) => setState(() => _fontPt = v),
-                    onChangeEnd: (_) {
-                      if (_reflowAll()) setState(() => _dirty = true);
-                    },
-                  ),
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  tooltip: 'إظهار الصفحة كاملة',
+                  onPressed: () => setState(() => _zoom = _fitZoom(MediaQuery.sizeOf(context).width, _viewH)),
+                  icon: const Icon(Icons.fit_screen),
                 ),
-                SizedBox(width: 28, child: Text(_fontPt.round().toString())),
-              ],
-            ),
-            Row(
-              children: [
-                const Text('وضوح السطور'),
-                Expanded(
-                  child: Slider(
-                    value: _lineOpacity,
-                    min: 0,
-                    max: .35,
-                    onChanged: (v) => setState(() => _lineOpacity = v),
-                  ),
-                ),
-                const SizedBox(width: 28),
               ],
             ),
             Row(
@@ -1606,6 +1811,20 @@ class _EditorScreenState extends State<EditorScreen> {
                     onChangeEnd: (_) {
                       if (_reflowAll()) setState(() => _dirty = true);
                     },
+                  ),
+                ),
+                const SizedBox(width: 28),
+              ],
+            ),
+            Row(
+              children: [
+                const Text('إظهار السطور'),
+                Expanded(
+                  child: Slider(
+                    value: _lineOpacity,
+                    min: 0,
+                    max: .35,
+                    onChanged: (v) => setState(() => _lineOpacity = v),
                   ),
                 ),
                 const SizedBox(width: 28),

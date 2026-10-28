@@ -39,6 +39,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
   List<int> get _runs =>
       _page < widget.lesson.pageRuns.length ? widget.lesson.pageRuns[_page] : const [];
 
+  List<int> get _sizes =>
+      _page < widget.lesson.pageSizes.length ? widget.lesson.pageSizes[_page] : const [];
+
+  double get _sizeScale => _size / widget.lesson.fontPt;
+
   List<PageObject> get _objs =>
       _page < widget.lesson.pageObjects.length ? widget.lesson.pageObjects[_page] : const [];
 
@@ -250,7 +255,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     return Text.rich(
       TextSpan(
         style: TextStyle(color: paperInk, fontSize: _size, height: 1.8),
-        children: richSpans(raw, f.fg, f.bg, strip: true),
+        children: richSpans(raw, f.fg, f.bg, sz: decodeSizes(raw.length, _sizes), sizeScale: _sizeScale, strip: true),
       ),
     );
   }
@@ -266,6 +271,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     }
 
     final f = decodeRuns(raw.length, _runs);
+    final zz = decodeSizes(raw.length, _sizes);
     final spans = <InlineSpan>[];
     var last = 0;
     var correctCount = 0;
@@ -273,7 +279,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       final m = matches[i];
       final expected = m.group(1) ?? '';
       if (_normalize(_inputs[i].text) == _normalize(expected)) correctCount++;
-      spans.addAll(richSpans(raw, f.fg, f.bg, start: last, end: m.start, strip: true));
+      spans.addAll(richSpans(raw, f.fg, f.bg, sz: zz, sizeScale: _sizeScale, start: last, end: m.start, strip: true));
       spans.add(
         WidgetSpan(
           alignment: PlaceholderAlignment.middle,
@@ -282,7 +288,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       );
       last = m.end;
     }
-    spans.addAll(richSpans(raw, f.fg, f.bg, start: last, strip: true));
+    spans.addAll(richSpans(raw, f.fg, f.bg, sz: zz, sizeScale: _sizeScale, start: last, strip: true));
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,

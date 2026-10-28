@@ -1,7 +1,12 @@
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:uuid/uuid.dart';
 
 import '../constants.dart';
 import '../models.dart';
+import '../services/pdf_export.dart';
 import '../services/storage.dart';
 import '../utils.dart';
 import 'editor_screen.dart';
@@ -50,6 +55,33 @@ class _HomeScreenState extends State<HomeScreen> {
       MaterialPageRoute(builder: (_) => EditorScreen(lesson: lesson, onSave: _persist)),
     );
     await _persist();
+  }
+
+  /// يستورد درساً من PDF صدّره التطبيق (أو ملف JSON) ويفتحه للتعديل.
+  Future<void> _importLesson() async {
+    try {
+      final r = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['pdf', 'json'],
+      );
+      final path = r?.files.single.path;
+      if (path == null) return;
+      final lesson = lessonFromBytes(await File(path).readAsBytes());
+      if (lesson == null) {
+        if (mounted) {
+          showMessage(context, 'لا توجد بيانات تعديل داخل هذا الملف. يعمل الاستيراد مع ملفات صدّرها التطبيق بعد هذا التحديث.');
+        }
+        return;
+      }
+      final json = lesson.toJson()..['id'] = const Uuid().v4();
+      final copy = Lesson.fromJson(json);
+      _lessons.insert(0, copy);
+      await _persist();
+      if (!mounted) return;
+      await _openEditor(copy);
+    } catch (_) {
+      if (mounted) showMessage(context, 'تعذر فتح الملف');
+    }
   }
 
   Future<void> _createLesson() async {
@@ -165,6 +197,8 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: Text(widget.isDeveloper ? '$appName · وضع المطوّر' : 'الدروس والملخصات'),
         actions: [
+          if (widget.isDeveloper)
+            IconButton(tooltip: 'استيراد ملف للتعديل', onPressed: _importLesson, icon: const Icon(Icons.file_open)),
           IconButton(tooltip: 'الإعدادات', onPressed: _openSettings, icon: const Icon(Icons.settings)),
           IconButton(tooltip: 'للتواصل', onPressed: _openContact, icon: const Icon(Icons.person_outline)),
           if (widget.isDeveloper)
