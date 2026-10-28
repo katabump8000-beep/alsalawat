@@ -28,6 +28,7 @@ class PageObject {
     List<String>? cells,
     this.path = '',
     this.header = 0xffc5cae9,
+    this.locked = false,
   })  : id = id ?? _uuid.v4(),
         cells = cells ?? [];
 
@@ -41,6 +42,13 @@ class PageObject {
   List<String> cells;
   String path;
   int header;
+  bool locked;
+
+  PageObject copy() => PageObject(
+        type: type, x: x + 18, y: y + 18, w: w, h: h, text: text, fill: fill,
+        textColor: textColor, shape: shape, rows: rows, cols: cols,
+        cells: List<String>.of(cells), path: path, header: header,
+      );
 
   String cell(int r, int c) {
     final i = r * cols + c;
@@ -63,6 +71,7 @@ class PageObject {
         'id': id, 'type': type, 'x': x, 'y': y, 'w': w, 'h': h, 'text': text,
         'fill': fill, 'textColor': textColor, 'shape': shape, 'rows': rows,
         'cols': cols, 'cells': cells, 'path': path, 'header': header,
+        'locked': locked,
       };
 
   factory PageObject.fromJson(Map<String, dynamic> j) => PageObject(
@@ -81,6 +90,7 @@ class PageObject {
         cells: (j['cells'] as List?)?.map((e) => e.toString()).toList(),
         path: (j['path'] as String?) ?? '',
         header: (j['header'] as num?)?.toInt() ?? 0xffc5cae9,
+        locked: (j['locked'] as bool?) ?? false,
       );
 }
 
@@ -100,15 +110,17 @@ class Lesson {
     this.titleBg = 0,
     this.fontPt = 13,
     this.inkColor = 0xff1f2430,
-    this.lineOpacity = .2,
+    this.lineOpacity = 0,
     this.lineFactor = 1.8,
     this.coverFront = '',
     this.coverBack = '',
     List<List<int>>? runs,
+    List<List<int>>? sizes,
     List<List<PageObject>>? objects,
   })  : id = id ?? _uuid.v4(),
         pages = (pages == null || pages.isEmpty) ? [''] : pages,
         pageRuns = runs ?? [],
+        pageSizes = sizes ?? [],
         pageObjects = objects ?? [] {
     sync();
   }
@@ -119,6 +131,10 @@ class Lesson {
       pageRuns.add(<int>[]);
     }
     if (pageRuns.length > pages.length) pageRuns.removeRange(pages.length, pageRuns.length);
+    while (pageSizes.length < pages.length) {
+      pageSizes.add(<int>[]);
+    }
+    if (pageSizes.length > pages.length) pageSizes.removeRange(pages.length, pageSizes.length);
     while (pageObjects.length < pages.length) {
       pageObjects.add(<PageObject>[]);
     }
@@ -143,6 +159,7 @@ class Lesson {
   double lineFactor;
   String coverFront;
   String coverBack;
+  List<List<int>> pageSizes; // أحجام مخصصة: [بداية، نهاية، حجم]...
   List<List<int>> pageRuns; // تلوين كل حرف: [بداية، نهاية، لون النص، لون التظليل]...
   List<List<PageObject>> pageObjects;
 
@@ -166,6 +183,7 @@ class Lesson {
         'coverFront': coverFront,
         'coverBack': coverBack,
         'runs': pageRuns,
+        'sizes': pageSizes,
         'objects': pageObjects.map((l) => l.map((o) => o.toJson()).toList()).toList(),
       };
 
@@ -184,10 +202,13 @@ class Lesson {
         titleBg: (j['titleBg'] as num?)?.toInt() ?? 0,
         fontPt: (j['fontPt'] as num?)?.toDouble() ?? 13,
         inkColor: (j['inkColor'] as num?)?.toInt() ?? 0xff1f2430,
-        lineOpacity: (j['lineOpacity'] as num?)?.toDouble() ?? .2,
+        lineOpacity: (j['lineOpacity'] as num?)?.toDouble() ?? 0,
         lineFactor: (j['lineFactor'] as num?)?.toDouble() ?? 1.8,
         coverFront: (j['coverFront'] as String?) ?? '',
         coverBack: (j['coverBack'] as String?) ?? '',
+        sizes: (j['sizes'] as List?)
+            ?.map((e) => (e as List).map((x) => (x as num).toInt()).toList())
+            .toList(),
         runs: (j['runs'] as List?)
             ?.map((e) => (e as List).map((x) => (x as num).toInt()).toList())
             .toList(),
